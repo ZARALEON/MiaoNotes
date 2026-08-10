@@ -129,3 +129,15 @@ Flutter's SDK-pinned analyzer dependencies.
 
 Explicitly excluded: Rust core, Electron, an official backend/account system,
 plugins, AI, team collaboration, and any synchronous startup-time remote work.
+
+## Contributing and security
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+changing frozen architecture, protocol, crypto, persistence, or startup
+boundaries. Report suspected vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), not in a public issue.
+
+## License
+
+MiaoNotes is licensed under the Mozilla Public License 2.0 (`MPL-2.0`). See
+[LICENSE](LICENSE) for the complete terms.
