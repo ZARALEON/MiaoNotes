@@ -65,22 +65,37 @@ void main() {
     );
 
     await tester.tap(find.byKey(const Key('import-notes-button')));
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('import-directory-field')),
+    );
     await tester.enterText(
       find.byKey(const Key('import-directory-field')),
       exported.directory.path,
     );
     await tester.tap(find.byKey(const Key('inspect-import-button')));
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.text('备份已通过完整性与结构校验'));
 
     expect(find.text('备份已通过完整性与结构校验'), findsOneWidget);
     expect(find.textContaining('1 条便签'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('confirm-import-button')));
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.text('备份已完整恢复'));
 
     expect(find.text('备份已完整恢复'), findsOneWidget);
     expect(app.workspace.currentDraft?.title, 'Recovered title');
     expect(app.workspace.currentDraft?.body, 'Recovered body');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
+}
+
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
+  for (var attempt = 0; attempt < 100; attempt += 1) {
+    await tester.pump(const Duration(milliseconds: 50));
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+  fail('Timed out waiting for the expected widget');
 }
