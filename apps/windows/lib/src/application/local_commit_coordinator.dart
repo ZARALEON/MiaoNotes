@@ -82,6 +82,17 @@ final class LocalCommitCoordinator extends ChangeNotifier {
     _notify();
   }
 
+  Future<void> refreshAfterImport() async {
+    final recovery = await store.recoveryState();
+    _pendingRemoteObjects = recovery.pendingObjects;
+    _openConflicts = recovery.openConflicts;
+    if (_started && recovery.dirtyDrafts > 0) {
+      _scheduleCommit(Duration.zero);
+    } else {
+      _notify();
+    }
+  }
+
   @override
   void dispose() {
     if (!_disposed) {

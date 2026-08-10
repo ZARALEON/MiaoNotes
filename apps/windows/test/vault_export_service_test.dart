@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:miaonotes_core/miaonotes_core.dart';
 
 import 'package:miaonotes_windows/src/application/vault_export_service.dart';
+import 'package:miaonotes_windows/src/application/vault_import_service.dart';
 
 void main() {
   late MiaoNotesDatabase database;
@@ -114,6 +115,111 @@ void main() {
 
     await expectLater(service.exportPortableSnapshot(), throwsStateError);
     expect(await destination.list().toList(), isEmpty);
+  });
+
+  test('previews and atomically imports a verified export', () async {
+    await store.saveDraft(_draft('first version'));
+    final committed = await store.commitDraft('note-unsafe');
+    await store.saveDraft(
+      _draft(
+        'latest dirty text',
+        bases: <String>[committed!.revision.revisionId],
+      ),
+    );
+    final exported = await VaultExportService(
+      store: store,
+      destinationRoot: destination,
+    ).exportPortableSnapshot();
+    final targetDatabase = MiaoNotesDatabase.inMemory();
+    final target = PersistentNoteStore(
+      database: targetDatabase,
+      idFactory: SequenceIdFactory('import'),
+      clock: () => DateTime.utc(2026, 8, 10, 13),
+    );
+    await target.initializeVault(
+      vault: VaultIdentity(
+        vaultId: 'placeholder',
+        generation: 1,
+        createdAtUtc: DateTime.utc(2026, 8, 10, 13),
+      ),
+      deviceId: 'restore-device',
+      deviceName: 'Restore test',
+    );
+    addTearDown(targetDatabase.close);
+    final importer = VaultImportService(store: target);
+
+    final preview = await importer.inspectPortableExport(exported.directory);
+    final result = await importer.importPortableExport(exported.directory);
+
+    expect(preview.noteCount, 1);
+    expect(preview.revisionCount, 1);
+    expect(preview.snapshot.vault.vaultId, 'vault-export-test');
+    expect(result.imported.queuedObjectCount, 2);
+    expect((await target.loadDraft('note-unsafe'))!.body, 'latest dirty text');
+  });
+
+  test('rechecks file digests after preview before importing', () async {
+    await store.saveDraft(_draft('protected content'));
+    final exported = await VaultExportService(
+      store: store,
+      destinationRoot: destination,
+    ).exportPortableSnapshot();
+    final targetDatabase = MiaoNotesDatabase.inMemory();
+    final target = PersistentNoteStore(
+      database: targetDatabase,
+      idFactory: SequenceIdFactory('import'),
+    );
+    await target.initializeVault(
+      vault: VaultIdentity(
+        vaultId: 'placeholder',
+        generation: 1,
+        createdAtUtc: DateTime.utc(2026, 8, 10),
+      ),
+      deviceId: 'restore-device',
+      deviceName: 'Restore test',
+    );
+    addTearDown(targetDatabase.close);
+    final importer = VaultImportService(store: target);
+    await importer.inspectPortableExport(exported.directory);
+    final content = await exported.directory
+        .list(recursive: true)
+        .where((entity) => entity is File && entity.path.endsWith('content.md'))
+        .cast<File>()
+        .single;
+    await content.writeAsString('changed after preview');
+
+    await expectLater(
+      importer.importPortableExport(exported.directory),
+      throwsA(isA<ImportVerificationException>()),
+    );
+    expect(await target.recentNotes(), isEmpty);
+  });
+
+  test('rejects undeclared files and inconsistent manifest counts', () async {
+    await store.saveDraft(_draft('content'));
+    final first = await VaultExportService(
+      store: store,
+      destinationRoot: destination,
+    ).exportPortableSnapshot();
+    final importer = VaultImportService(store: store);
+    await File('${first.directory.path}/unexpected.txt').writeAsString('no');
+    await expectLater(
+      importer.inspectPortableExport(first.directory),
+      throwsA(isA<ImportVerificationException>()),
+    );
+
+    final second = await VaultExportService(
+      store: store,
+      destinationRoot: destination,
+    ).exportPortableSnapshot();
+    final manifestFile = File('${second.directory.path}/manifest.json');
+    final manifest = jsonDecode(await manifestFile.readAsString()) as Map;
+    (manifest['counts'] as Map)['notes'] = 999;
+    await manifestFile.writeAsString(jsonEncode(manifest));
+    await expectLater(
+      importer.inspectPortableExport(second.directory),
+      throwsA(isA<ImportVerificationException>()),
+    );
   });
 }
 

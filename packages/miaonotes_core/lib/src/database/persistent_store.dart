@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import '../export/export_snapshot.dart';
+import '../import/portable_import.dart';
 import '../model/canonical_json.dart';
 import '../model/content_format.dart';
 import '../model/note_draft.dart';
@@ -496,6 +497,151 @@ final class PersistentNoteStore {
       );
     },
   );
+
+  /// Restores a verified portable snapshot into a completely empty local
+  /// Vault. The local device identity is retained and imported revisions are
+  /// re-announced through a new durable outbox so history can synchronize.
+  Future<PortableImportResult> importPortableSnapshot(
+    ExportSnapshot snapshot, {
+    ImportApplyHook? applyHook,
+  }) async {
+    final validated = _validatePortableImport(snapshot);
+    return database.transaction(() async {
+      final state = await database
+          .customSelect(
+            'SELECT '
+            '(SELECT COUNT(*) FROM notes) + '
+            '(SELECT COUNT(*) FROM revisions) + '
+            '(SELECT COUNT(*) FROM sync_events) + '
+            '(SELECT COUNT(*) FROM sync_outbox) + '
+            '(SELECT COUNT(*) FROM sync_cursors) + '
+            '(SELECT COUNT(*) FROM conflicts) + '
+            '(SELECT COUNT(*) FROM attachments) + '
+            '(SELECT COUNT(*) FROM note_attachments) AS protected_rows, '
+            '(SELECT next_event_sequence FROM vault_state '
+            'WHERE singleton_id = 1) AS next_event_sequence',
+          )
+          .getSingle();
+      if (state.read<int>('protected_rows') != 0 ||
+          state.read<int>('next_event_sequence') != 1) {
+        throw const PortableImportException(
+          'Portable import requires an empty local Vault',
+        );
+      }
+
+      final importingDeviceId = await localDeviceId();
+      final now = clock().toUtc();
+      await database.customUpdate(
+        'UPDATE vault_state SET vault_id = ?, vault_generation = ?, '
+        'protocol_version = ?, created_at_ms = ?, updated_at_ms = ? '
+        'WHERE singleton_id = 1',
+        variables: <Variable>[
+          Variable.withString(snapshot.vault.vaultId),
+          Variable.withInt(snapshot.vault.generation),
+          Variable.withInt(snapshot.vault.protocolVersion),
+          Variable.withInt(snapshot.vault.createdAtUtc.millisecondsSinceEpoch),
+          Variable.withInt(now.millisecondsSinceEpoch),
+        ],
+        updates: <TableInfo<Table, Object?>>{database.vaultState},
+      );
+
+      var sequence = 1;
+      for (final revision in validated.revisions) {
+        await _insertRevision(revision);
+        await _updateHeads(revision);
+        final revisionKey = ProtocolPaths.revision(
+          revision.noteId,
+          revision.revisionId,
+        );
+        final revisionBytes = revision.toBytes();
+        final event = SyncEvent.revisionCommitted(
+          vaultId: snapshot.vault.vaultId,
+          vaultGeneration: snapshot.vault.generation,
+          eventId: idFactory.next(now),
+          deviceId: importingDeviceId,
+          sequence: sequence,
+          objectKey: revisionKey,
+          objectHash: sha256HexBytes(revisionBytes),
+          occurredAtUtc: now,
+        );
+        await _insertEvent(event);
+        await _insertOutbox(
+          key: revisionKey,
+          kind: 'revision',
+          bytes: revisionBytes,
+          createdAtUtc: now,
+        );
+        await _insertOutbox(
+          key: ProtocolPaths.event(importingDeviceId, sequence, event.eventId),
+          kind: 'event',
+          bytes: event.toBytes(),
+          dependencyKey: revisionKey,
+          createdAtUtc: now,
+        );
+        sequence += 1;
+        await applyHook?.call(sequence - 1);
+      }
+
+      for (final note in snapshot.notes) {
+        final draft = note.draft;
+        await database.customInsert(
+          'INSERT INTO notes ('
+          'note_id, format, title, draft_json, body_text, tags_json, tags_text, '
+          'base_revision_ids_json, dirty, is_deleted, '
+          'last_committed_revision_id, created_at_ms, updated_at_ms'
+          ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          variables: <Variable>[
+            Variable.withString(draft.noteId),
+            Variable.withString(draft.format.wireName),
+            Variable.withString(draft.title),
+            Variable.withString(_draftJson(draft)),
+            Variable.withString(_searchableBody(draft.format, draft.body)),
+            Variable.withString(canonicalJson(draft.tags)),
+            Variable.withString(draft.tags.join(' ')),
+            Variable.withString(canonicalJson(draft.baseRevisionIds)),
+            Variable.withInt(note.dirty ? 1 : 0),
+            Variable.withInt(draft.deleted ? 1 : 0),
+            Variable<String>(note.lastCommittedRevisionId),
+            Variable.withInt(note.createdAtUtc.millisecondsSinceEpoch),
+            Variable.withInt(draft.updatedAtUtc.millisecondsSinceEpoch),
+          ],
+        );
+      }
+
+      for (final conflict in snapshot.conflicts) {
+        await database.customInsert(
+          'INSERT INTO conflicts ('
+          'conflict_id, note_id, head_revision_ids_json, status, '
+          'created_at_ms, resolved_at_ms'
+          ') VALUES (?, ?, ?, ?, ?, ?)',
+          variables: <Variable>[
+            Variable.withString(conflict.conflictId),
+            Variable.withString(conflict.noteId),
+            Variable.withString(canonicalJson(conflict.headRevisionIds)),
+            Variable.withString(conflict.status.name),
+            Variable.withInt(conflict.createdAtUtc.millisecondsSinceEpoch),
+            Variable<int>(conflict.resolvedAtUtc?.millisecondsSinceEpoch),
+          ],
+        );
+      }
+
+      await database.customUpdate(
+        'UPDATE vault_state SET next_event_sequence = ?, updated_at_ms = ? '
+        'WHERE singleton_id = 1',
+        variables: <Variable>[
+          Variable.withInt(sequence),
+          Variable.withInt(now.millisecondsSinceEpoch),
+        ],
+        updates: <TableInfo<Table, Object?>>{database.vaultState},
+      );
+      return PortableImportResult(
+        noteCount: snapshot.notes.length,
+        revisionCount: validated.revisions.length,
+        conflictCount: snapshot.conflicts.length,
+        queuedObjectCount: validated.revisions.length * 2,
+      );
+    });
+  }
 
   Future<String> localDeviceId() async {
     final row = await _requireVaultRow();
@@ -1164,6 +1310,199 @@ final class PersistentNoteStore {
       );
     }
   }
+}
+
+final class _ValidatedPortableImport {
+  const _ValidatedPortableImport({required this.revisions});
+
+  final List<Revision> revisions;
+}
+
+_ValidatedPortableImport _validatePortableImport(ExportSnapshot snapshot) {
+  final vault = snapshot.vault;
+  if (vault.vaultId.isEmpty ||
+      vault.generation < 1 ||
+      vault.protocolVersion != 1) {
+    throw const PortableImportException('Invalid exported Vault identity');
+  }
+
+  final notes = <String, ExportNoteState>{};
+  for (final note in snapshot.notes) {
+    final noteId = note.draft.noteId;
+    if (noteId.isEmpty || notes.containsKey(noteId)) {
+      throw PortableImportException('Duplicate or empty note ID: $noteId');
+    }
+    notes[noteId] = note;
+    if (note.createdAtUtc.isAfter(note.draft.updatedAtUtc)) {
+      throw PortableImportException('Note timestamps are invalid: $noteId');
+    }
+    if (note.draft.format == ContentFormat.markdown &&
+        note.draft.body is! String) {
+      throw PortableImportException('Markdown note body is invalid: $noteId');
+    }
+  }
+
+  final revisions = <String, Revision>{};
+  for (final revision in snapshot.revisions) {
+    if (revision.revisionId.isEmpty ||
+        revisions.containsKey(revision.revisionId)) {
+      throw PortableImportException(
+        'Duplicate or empty revision ID: ${revision.revisionId}',
+      );
+    }
+    revisions[revision.revisionId] = revision;
+    if (!notes.containsKey(revision.noteId)) {
+      throw PortableImportException(
+        'Revision references a missing note: ${revision.revisionId}',
+      );
+    }
+    if (revision.vaultId != vault.vaultId ||
+        revision.vaultGeneration != vault.generation) {
+      throw PortableImportException(
+        'Revision belongs to another Vault: ${revision.revisionId}',
+      );
+    }
+  }
+
+  final children = <String, List<String>>{
+    for (final revisionId in revisions.keys) revisionId: <String>[],
+  };
+  final indegree = <String, int>{
+    for (final revisionId in revisions.keys) revisionId: 0,
+  };
+  for (final revision in revisions.values) {
+    for (final parentId in revision.parentRevisionIds) {
+      final parent = revisions[parentId];
+      if (parent == null || parent.noteId != revision.noteId) {
+        throw PortableImportException(
+          'Revision parent is missing or belongs to another note: '
+          '${revision.revisionId} -> $parentId',
+        );
+      }
+      children[parentId]!.add(revision.revisionId);
+      indegree[revision.revisionId] = indegree[revision.revisionId]! + 1;
+    }
+  }
+
+  int compareRevisionIds(String left, String right) {
+    final time = revisions[left]!.createdAtUtc.compareTo(
+      revisions[right]!.createdAtUtc,
+    );
+    return time != 0 ? time : left.compareTo(right);
+  }
+
+  final ready =
+      indegree.entries
+          .where((entry) => entry.value == 0)
+          .map((entry) => entry.key)
+          .toList()
+        ..sort(compareRevisionIds);
+  final ordered = <Revision>[];
+  while (ready.isNotEmpty) {
+    final revisionId = ready.removeAt(0);
+    ordered.add(revisions[revisionId]!);
+    for (final childId in children[revisionId]!) {
+      final remaining = indegree[childId]! - 1;
+      indegree[childId] = remaining;
+      if (remaining == 0) {
+        ready.add(childId);
+        ready.sort(compareRevisionIds);
+      }
+    }
+  }
+  if (ordered.length != revisions.length) {
+    throw const PortableImportException('Revision history contains a cycle');
+  }
+
+  final headsByNote = <String, Set<String>>{
+    for (final noteId in notes.keys) noteId: <String>{},
+  };
+  for (final revision in revisions.values) {
+    if (children[revision.revisionId]!.isEmpty) {
+      headsByNote[revision.noteId]!.add(revision.revisionId);
+    }
+  }
+  for (final entry in notes.entries) {
+    final noteId = entry.key;
+    final note = entry.value;
+    for (final baseId in note.draft.baseRevisionIds) {
+      if (revisions[baseId]?.noteId != noteId) {
+        throw PortableImportException(
+          'Note references a missing base revision: $noteId -> $baseId',
+        );
+      }
+    }
+    final lastCommittedId = note.lastCommittedRevisionId;
+    if (lastCommittedId != null &&
+        revisions[lastCommittedId]?.noteId != noteId) {
+      throw PortableImportException(
+        'Note references a missing committed revision: $noteId',
+      );
+    }
+    if (!note.dirty) {
+      if (lastCommittedId == null) {
+        throw PortableImportException(
+          'Clean note has no committed revision: $noteId',
+        );
+      }
+      if (revisions[lastCommittedId]!.contentHash !=
+          sha256HexJson(note.draft.contentPayload)) {
+        throw PortableImportException(
+          'Clean note does not match its committed revision: $noteId',
+        );
+      }
+    }
+  }
+
+  final conflictIds = <String>{};
+  final openConflictNotes = <String>{};
+  for (final conflict in snapshot.conflicts) {
+    if (conflict.conflictId.isEmpty || !conflictIds.add(conflict.conflictId)) {
+      throw PortableImportException(
+        'Duplicate or empty conflict ID: ${conflict.conflictId}',
+      );
+    }
+    if (!notes.containsKey(conflict.noteId) ||
+        conflict.headRevisionIds.length < 2) {
+      throw PortableImportException(
+        'Conflict is missing its note or heads: ${conflict.conflictId}',
+      );
+    }
+    for (final headId in conflict.headRevisionIds) {
+      if (revisions[headId]?.noteId != conflict.noteId) {
+        throw PortableImportException(
+          'Conflict references a missing revision: ${conflict.conflictId}',
+        );
+      }
+    }
+    if (conflict.status == ExportConflictStatus.open) {
+      if (!openConflictNotes.add(conflict.noteId) ||
+          !_sameStringSet(
+            conflict.headRevisionIds,
+            headsByNote[conflict.noteId]!,
+          )) {
+        throw PortableImportException(
+          'Open conflict does not match current DAG heads: '
+          '${conflict.conflictId}',
+        );
+      }
+      if (conflict.resolvedAtUtc != null) {
+        throw PortableImportException(
+          'Open conflict has a resolution timestamp: ${conflict.conflictId}',
+        );
+      }
+    } else if (conflict.resolvedAtUtc == null) {
+      throw PortableImportException(
+        'Resolved conflict has no resolution timestamp: ${conflict.conflictId}',
+      );
+    }
+  }
+  return _ValidatedPortableImport(revisions: List.unmodifiable(ordered));
+}
+
+bool _sameStringSet(Iterable<String> left, Set<String> right) {
+  final leftSet = left.toSet();
+  return leftSet.length == right.length && leftSet.containsAll(right);
 }
 
 void _verifyVaultRow(QueryRow row, VaultIdentity vault, String deviceId) {

@@ -61,6 +61,9 @@ Export v1 establishes a verifiable recovery artifact. Destructive import into a
 live Vault is deferred; it requires a separate preview, validation, duplicate
 policy, and rollback decision rather than silently mutating local data.
 
+ADR 0012 subsequently accepts restore into an empty local Vault only. Import
+into or merge with a populated Vault remains deferred.
+
 ## Verification
 
 Core tests prove a snapshot includes immutable history and the latest dirty

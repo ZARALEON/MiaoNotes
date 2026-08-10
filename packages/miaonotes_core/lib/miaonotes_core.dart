@@ -6,6 +6,7 @@ export 'src/database/database.dart' hide Revision, SyncEvent;
 export 'src/database/persistent_store.dart';
 export 'src/database/schema_v1.dart';
 export 'src/export/export_snapshot.dart';
+export 'src/import/portable_import.dart';
 export 'src/model/canonical_json.dart';
 export 'src/model/content_format.dart';
 export 'src/model/note_draft.dart';

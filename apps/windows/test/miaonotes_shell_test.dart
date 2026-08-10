@@ -16,6 +16,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('喵喵便签'), findsOneWidget);
+    expect(find.byKey(const Key('import-notes-button')), findsOneWidget);
     expect(find.byKey(const Key('export-notes-button')), findsOneWidget);
     expect(find.byKey(const Key('note-body-field')), findsOneWidget);
     await tester.enterText(find.byKey(const Key('note-body-field')), '一打开就可以写');
