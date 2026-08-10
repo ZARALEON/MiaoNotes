@@ -911,6 +911,10 @@ final class PersistentNoteStore {
     if (query.trim().isEmpty) {
       return recentNotes(limit: limit);
     }
+    final ftsQuery = _safeFtsPrefixQuery(query);
+    if (ftsQuery.isEmpty) {
+      return const <StoredNoteSummary>[];
+    }
     final rows = await database
         .customSelect(
           'SELECT n.note_id, n.title, n.body_text, n.format, '
@@ -919,7 +923,7 @@ final class PersistentNoteStore {
           'WHERE notes_fts MATCH ? AND n.is_deleted = 0 '
           'ORDER BY bm25(notes_fts), n.updated_at_ms DESC LIMIT ?',
           variables: <Variable>[
-            Variable.withString(query),
+            Variable.withString(ftsQuery),
             Variable.withInt(limit),
           ],
           readsFrom: <ResultSetImplementation<Table, Object?>>{
@@ -1681,4 +1685,14 @@ String _searchableBody(ContentFormat format, Object body) {
 
   collect(body);
   return text.join('\n');
+}
+
+String _safeFtsPrefixQuery(String query) {
+  final searchableCharacter = RegExp(r'[\p{L}\p{N}]', unicode: true);
+  return query
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((term) => searchableCharacter.hasMatch(term))
+      .map((term) => '"${term.replaceAll('"', '""')}"*')
+      .join(' AND ');
 }

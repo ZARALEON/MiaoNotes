@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:miaonotes_core/miaonotes_core.dart';
 import 'package:miaonotes_windows/src/application/miaonotes_application.dart';
@@ -50,6 +51,65 @@ void main() {
     expect(recovery.revisions, 1);
     expect(recovery.pendingObjects, 2);
     expect(find.text('已保存 · 2 项等待同步'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await app.close();
+  });
+
+  testWidgets('sidebar search filters locally and can be cleared', (
+    tester,
+  ) async {
+    final app = await _openTestApplication();
+    final firstId = app.workspace.currentDraft!.noteId;
+    app.workspace
+      ..updateTitle('Alpha')
+      ..updateBody('orchard checklist');
+    await app.workspace.flush();
+    await app.workspace.createNote();
+    final secondId = app.workspace.currentDraft!.noteId;
+    app.workspace
+      ..updateTitle('Beta')
+      ..updateBody('ocean journal');
+    await app.workspace.flush();
+
+    await tester.pumpWidget(
+      MiaoNotesShell(workspace: app.workspace, localCommits: app.localCommits),
+    );
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('note-search-field')))
+          .focusNode!
+          .hasFocus,
+      isTrue,
+    );
+    await tester.enterText(find.byKey(const Key('note-search-field')), 'orch');
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(ValueKey<String>('note-list-$firstId')), findsOneWidget);
+    expect(find.byKey(ValueKey<String>('note-list-$secondId')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('clear-search-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey<String>('note-list-$firstId')), findsOneWidget);
+    expect(find.byKey(ValueKey<String>('note-list-$secondId')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('note-search-field')), 'ocean');
+    await tester.tap(find.byKey(const Key('new-note-button')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(app.workspace.searchQuery, isEmpty);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('note-search-field')))
+          .controller!
+          .text,
+      isEmpty,
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     await app.close();

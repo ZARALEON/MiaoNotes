@@ -37,7 +37,7 @@ ThemeData buildMiaoNotesTheme() {
   );
 }
 
-final class MiaoNotesShell extends StatelessWidget {
+final class MiaoNotesShell extends StatefulWidget {
   const MiaoNotesShell({
     required this.workspace,
     required this.localCommits,
@@ -52,6 +52,21 @@ final class MiaoNotesShell extends StatelessWidget {
   final SyncSettingsController? syncSettings;
 
   @override
+  State<MiaoNotesShell> createState() => _MiaoNotesShellState();
+}
+
+final class _MiaoNotesShellState extends State<MiaoNotesShell> {
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -60,28 +75,35 @@ final class MiaoNotesShell extends StatelessWidget {
       home: CallbackShortcuts(
         bindings: <ShortcutActivator, VoidCallback>{
           const SingleActivator(LogicalKeyboardKey.keyN, control: true): () {
-            unawaited(_ignoreFailure(workspace.createNote()));
+            _searchController.clear();
+            unawaited(_ignoreFailure(widget.workspace.createNote()));
           },
           const SingleActivator(LogicalKeyboardKey.keyS, control: true): () {
-            unawaited(_ignoreFailure(localCommits.commitNow()));
+            unawaited(_ignoreFailure(widget.localCommits.commitNow()));
+          },
+          const SingleActivator(LogicalKeyboardKey.keyF, control: true): () {
+            _searchFocus.requestFocus();
           },
         },
         child: Focus(
           autofocus: true,
           child: AnimatedBuilder(
             animation: Listenable.merge(<Listenable>[
-              workspace,
-              localCommits,
-              ?remoteSync,
-              ?syncSettings,
+              widget.workspace,
+              widget.localCommits,
+              ?widget.remoteSync,
+              ?widget.syncSettings,
             ]),
             builder: (context, _) {
-              final activeRemote = syncSettings?.remoteSync ?? remoteSync;
+              final activeRemote =
+                  widget.syncSettings?.remoteSync ?? widget.remoteSync;
               return _WorkspaceView(
-                workspace: workspace,
-                localCommits: localCommits,
+                workspace: widget.workspace,
+                localCommits: widget.localCommits,
                 remoteSync: activeRemote,
-                syncSettings: syncSettings,
+                syncSettings: widget.syncSettings,
+                searchController: _searchController,
+                searchFocus: _searchFocus,
               );
             },
           ),
@@ -97,12 +119,16 @@ final class _WorkspaceView extends StatelessWidget {
     required this.localCommits,
     required this.remoteSync,
     required this.syncSettings,
+    required this.searchController,
+    required this.searchFocus,
   });
 
   final NoteWorkspaceController workspace;
   final LocalCommitCoordinator localCommits;
   final RemoteSyncCoordinator? remoteSync;
   final SyncSettingsController? syncSettings;
+  final TextEditingController searchController;
+  final FocusNode searchFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +143,8 @@ final class _WorkspaceView extends StatelessWidget {
                 workspace: workspace,
                 localCommits: localCommits,
                 syncSettings: syncSettings,
+                searchController: searchController,
+                searchFocus: searchFocus,
               ),
             ),
             const VerticalDivider(),
@@ -144,11 +172,15 @@ final class _NotesSidebar extends StatelessWidget {
     required this.workspace,
     required this.localCommits,
     required this.syncSettings,
+    required this.searchController,
+    required this.searchFocus,
   });
 
   final NoteWorkspaceController workspace;
   final LocalCommitCoordinator localCommits;
   final SyncSettingsController? syncSettings;
+  final TextEditingController searchController;
+  final FocusNode searchFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -221,23 +253,33 @@ final class _NotesSidebar extends StatelessWidget {
                 IconButton.filledTonal(
                   key: const Key('new-note-button'),
                   tooltip: '新建便签  Ctrl+N',
-                  onPressed: () =>
-                      unawaited(_ignoreFailure(workspace.createNote())),
+                  onPressed: () {
+                    searchController.clear();
+                    unawaited(_ignoreFailure(workspace.createNote()));
+                  },
                   icon: const Icon(Icons.add, size: 20),
                 ),
               ],
             ),
           ),
+          _LocalSearchField(
+            controller: searchController,
+            focusNode: searchFocus,
+            workspace: workspace,
+          ),
           const Divider(),
           Expanded(
             child: notes.isEmpty
-                ? const _EmptyNotesHint()
+                ? workspace.searchQuery.isEmpty
+                      ? const _EmptyNotesHint()
+                      : const _EmptySearchHint()
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     itemCount: notes.length,
                     itemBuilder: (context, index) {
                       final note = notes[index];
                       return _NoteListTile(
+                        key: ValueKey<String>('note-list-${note.noteId}'),
                         note: note,
                         selected: note.noteId == selectedId,
                         onTap: () => unawaited(
@@ -260,6 +302,129 @@ final class _NotesSidebar extends StatelessWidget {
   }
 }
 
+final class _LocalSearchField extends StatefulWidget {
+  const _LocalSearchField({
+    required this.controller,
+    required this.focusNode,
+    required this.workspace,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final NoteWorkspaceController workspace;
+
+  @override
+  State<_LocalSearchField> createState() => _LocalSearchFieldState();
+}
+
+final class _LocalSearchFieldState extends State<_LocalSearchField> {
+  static const _debounce = Duration(milliseconds: 180);
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_cancelPendingSearchWhenCleared);
+  }
+
+  void _cancelPendingSearchWhenCleared() {
+    if (widget.controller.text.isEmpty) {
+      _timer?.cancel();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_cancelPendingSearchWhenCleared);
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _queueSearch(String query) {
+    _timer?.cancel();
+    setState(() {});
+    if (query.trim().isEmpty) {
+      unawaited(_ignoreFailure(widget.workspace.searchNotes('')));
+      return;
+    }
+    _timer = Timer(
+      _debounce,
+      () => unawaited(_ignoreFailure(widget.workspace.searchNotes(query))),
+    );
+  }
+
+  void _clear() {
+    _timer?.cancel();
+    widget.controller.clear();
+    unawaited(_ignoreFailure(widget.workspace.searchNotes('')));
+    widget.focusNode.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+    child: Column(
+      children: <Widget>[
+        TextField(
+          key: const Key('note-search-field'),
+          controller: widget.controller,
+          focusNode: widget.focusNode,
+          onChanged: _queueSearch,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.white.withValues(alpha: 0.72),
+            hintText: '搜索便签  Ctrl+F',
+            prefixIcon: const Icon(Icons.search, size: 19),
+            suffixIcon: widget.controller.text.isEmpty
+                ? null
+                : IconButton(
+                    key: const Key('clear-search-button'),
+                    tooltip: '清除搜索',
+                    onPressed: _clear,
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        if (widget.workspace.searchState == NoteSearchState.searching)
+          const LinearProgressIndicator(
+            key: Key('search-progress'),
+            minHeight: 2,
+          ),
+        if (widget.workspace.searchState == NoteSearchState.failed)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '搜索失败，本地便签未受影响',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => unawaited(
+                    _ignoreFailure(
+                      widget.workspace.searchNotes(widget.controller.text),
+                    ),
+                  ),
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
 final class _EmptyNotesHint extends StatelessWidget {
   const _EmptyNotesHint();
 
@@ -273,11 +438,25 @@ final class _EmptyNotesHint extends StatelessWidget {
   );
 }
 
+final class _EmptySearchHint extends StatelessWidget {
+  const _EmptySearchHint();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.all(20),
+    child: Text(
+      '没有找到匹配的便签。',
+      style: TextStyle(color: Color(0xff8a7770), height: 1.5),
+    ),
+  );
+}
+
 final class _NoteListTile extends StatelessWidget {
   const _NoteListTile({
     required this.note,
     required this.selected,
     required this.onTap,
+    super.key,
   });
 
   final StoredNoteSummary note;

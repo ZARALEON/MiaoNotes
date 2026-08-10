@@ -5,6 +5,8 @@ import 'package:miaonotes_core/miaonotes_core.dart';
 
 enum DraftSaveState { idle, saving, saved, failed }
 
+enum NoteSearchState { idle, searching, failed }
+
 final class NoteWorkspaceController extends ChangeNotifier {
   NoteWorkspaceController({
     required this.store,
@@ -22,6 +24,10 @@ final class NoteWorkspaceController extends ChangeNotifier {
   DraftSaveState _saveState = DraftSaveState.idle;
   DateTime? _lastSavedAtUtc;
   Object? _saveError;
+  String _searchQuery = '';
+  NoteSearchState _searchState = NoteSearchState.idle;
+  Object? _searchError;
+  int _searchGeneration = 0;
   NoteDraft? _pendingSave;
   Future<void>? _saveLoop;
   Future<int>? _commitLoop;
@@ -35,6 +41,9 @@ final class NoteWorkspaceController extends ChangeNotifier {
   DraftSaveState get saveState => _saveState;
   DateTime? get lastSavedAtUtc => _lastSavedAtUtc;
   Object? get saveError => _saveError;
+  String get searchQuery => _searchQuery;
+  NoteSearchState get searchState => _searchState;
+  Object? get searchError => _searchError;
   bool get initialized => _initialized;
   bool get commitInProgress => _commitInProgress;
   int get localSaveGeneration => _localSaveGeneration;
@@ -56,6 +65,13 @@ final class NoteWorkspaceController extends ChangeNotifier {
   Future<void> createNote() async {
     if (!await _flushBeforeNavigation()) {
       return;
+    }
+    if (_searchQuery.isNotEmpty) {
+      _searchGeneration += 1;
+      _searchQuery = '';
+      _searchState = NoteSearchState.idle;
+      _searchError = null;
+      _notes = await store.recentNotes();
     }
     _currentDraft = _newDraft();
     _saveState = DraftSaveState.idle;
@@ -95,6 +111,35 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _replaceDraft(title: draft.title, body: body);
   }
 
+  /// Runs an on-demand local FTS query. Generation checks prevent a slower
+  /// previous query from replacing newer results while the user keeps typing.
+  Future<void> searchNotes(String query) async {
+    final normalized = query.trim();
+    final generation = ++_searchGeneration;
+    _searchQuery = normalized;
+    _searchState = NoteSearchState.searching;
+    _searchError = null;
+    _notify();
+    try {
+      final results = normalized.isEmpty
+          ? await store.recentNotes()
+          : await store.searchNotes(normalized);
+      if (generation != _searchGeneration) {
+        return;
+      }
+      _notes = results;
+      _searchState = NoteSearchState.idle;
+      _notify();
+    } on Object catch (error) {
+      if (generation != _searchGeneration) {
+        return;
+      }
+      _searchError = error;
+      _searchState = NoteSearchState.failed;
+      _notify();
+    }
+  }
+
   Future<void> retrySave() async {
     final draft = _currentDraft;
     if (draft == null) {
@@ -116,7 +161,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
       return;
     }
     final currentId = _currentDraft?.noteId;
-    _notes = await store.recentNotes();
+    _notes = await _loadVisibleNotes();
     if (currentId != null) {
       final refreshed = await store.loadDraft(currentId);
       if (refreshed != null) {
@@ -137,6 +182,10 @@ final class NoteWorkspaceController extends ChangeNotifier {
     if (_pendingSave != null || _saveLoop != null || _commitInProgress) {
       throw StateError('Cannot refresh the workspace while a save is active');
     }
+    _searchGeneration += 1;
+    _searchQuery = '';
+    _searchState = NoteSearchState.idle;
+    _searchError = null;
     _notes = await store.recentNotes();
     _currentDraft = _notes.isEmpty
         ? _newDraft()
@@ -371,6 +420,9 @@ final class NoteWorkspaceController extends ChangeNotifier {
   }
 
   void _upsertSummary(NoteDraft draft) {
+    if (_searchQuery.isNotEmpty) {
+      return;
+    }
     final updated = _notes
         .where((note) => note.noteId != draft.noteId)
         .toList(growable: true);
@@ -405,6 +457,10 @@ final class NoteWorkspaceController extends ChangeNotifier {
       updatedAtUtc: now,
     );
   }
+
+  Future<List<StoredNoteSummary>> _loadVisibleNotes() => _searchQuery.isEmpty
+      ? store.recentNotes()
+      : store.searchNotes(_searchQuery);
 
   void _notify() {
     if (!_disposed) {

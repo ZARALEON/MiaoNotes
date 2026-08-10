@@ -103,6 +103,10 @@ store starts only after the editor renders, syncs only already-committed objects
 polls in the background, and exposes offline, authentication, Vault mismatch, and
 retry states without reducing local editing availability.
 
+The sidebar exposes on-demand local full-text search over note titles and bodies.
+Queries are debounced, safely converted to FTS5 prefix terms, and can be focused
+with `Ctrl+F`. Search never performs network I/O or joins the startup path.
+
 R2 secrets are intentionally absent from source code, SQLite, and configuration
 files. The Windows client stores them as a generic credential in the current
 user's Windows Credential Manager set through pure Dart FFI. Non-sensitive
