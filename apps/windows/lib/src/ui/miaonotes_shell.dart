@@ -11,6 +11,7 @@ import '../application/sync_settings_controller.dart';
 import 'conflict_center_dialog.dart';
 import 'export_dialog.dart';
 import 'import_dialog.dart';
+import 'recycle_bin_dialog.dart';
 import 'sync_settings_dialog.dart';
 
 ThemeData buildMiaoNotesTheme() {
@@ -158,12 +159,53 @@ final class _WorkspaceView extends StatelessWidget {
                       localCommits: localCommits,
                       remoteSync: remoteSync,
                       syncSettings: syncSettings,
+                      onDelete: () => _deleteCurrentNote(context),
                     ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _deleteCurrentNote(BuildContext context) async {
+    final draft = workspace.currentDraft;
+    if (draft == null) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除这条便签？'),
+        content: const Text('便签会移入回收站，并在后台同步删除状态。之后仍可恢复。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('confirm-delete-note'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('移入回收站'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      if (await workspace.deleteCurrentNote()) {
+        searchController.clear();
+        await localCommits.refreshPendingRemoteObjects();
+      }
+    } on Object {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('无法删除便签，本地内容仍然保留。')));
+      }
+    }
   }
 }
 
@@ -229,6 +271,21 @@ final class _NotesSidebar extends StatelessWidget {
                         unawaited(showSyncSettingsDialog(context, settings)),
                     icon: const Icon(Icons.cloud_outlined, size: 20),
                   ),
+                IconButton(
+                  key: const Key('recycle-bin-button'),
+                  tooltip: '回收站',
+                  onPressed: () => unawaited(() async {
+                    final restored = await showRecycleBinDialog(
+                      context,
+                      workspace: workspace,
+                      localCommits: localCommits,
+                    );
+                    if (restored) {
+                      searchController.clear();
+                    }
+                  }()),
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                ),
                 IconButton(
                   key: const Key('import-notes-button'),
                   tooltip: '从备份恢复',
@@ -515,6 +572,7 @@ final class _NoteEditor extends StatefulWidget {
     required this.localCommits,
     required this.remoteSync,
     required this.syncSettings,
+    required this.onDelete,
     super.key,
   });
 
@@ -523,6 +581,7 @@ final class _NoteEditor extends StatefulWidget {
   final LocalCommitCoordinator localCommits;
   final RemoteSyncCoordinator? remoteSync;
   final SyncSettingsController? syncSettings;
+  final Future<void> Function() onDelete;
 
   @override
   State<_NoteEditor> createState() => _NoteEditorState();
@@ -566,16 +625,31 @@ final class _NoteEditorState extends State<_NoteEditor> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        TextField(
-          key: const Key('note-title-field'),
-          controller: _titleController,
-          onChanged: widget.workspace.updateTitle,
-          maxLines: 1,
-          style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w600),
-          decoration: const InputDecoration(
-            hintText: '标题',
-            hintStyle: TextStyle(color: Color(0xffc1aaa3)),
-          ),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                key: const Key('note-title-field'),
+                controller: _titleController,
+                onChanged: widget.workspace.updateTitle,
+                maxLines: 1,
+                style: const TextStyle(
+                  fontSize: 25,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: const InputDecoration(
+                  hintText: '标题',
+                  hintStyle: TextStyle(color: Color(0xffc1aaa3)),
+                ),
+              ),
+            ),
+            IconButton(
+              key: const Key('delete-note-button'),
+              tooltip: '移入回收站',
+              onPressed: () => unawaited(widget.onDelete()),
+              icon: const Icon(Icons.delete_outline, size: 20),
+            ),
+          ],
         ),
         const SizedBox(height: 18),
         Expanded(

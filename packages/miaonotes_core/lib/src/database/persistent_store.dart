@@ -274,6 +274,55 @@ final class PersistentNoteStore {
     return row == null ? null : _draftFromRow(row);
   }
 
+  /// Atomically moves a persisted note into or out of the recycle bin.
+  ///
+  /// A note without Revision history has never existed remotely, so deleting
+  /// it remains a local clean tombstone. Restoring it creates its first upsert.
+  /// Notes with history create a normal protocol Revision and durable outbox
+  /// records through the same transaction as every other local commit.
+  Future<CommittedRevisionBundle?> setNoteDeleted(
+    String noteId, {
+    required bool deleted,
+    CommitFaultHook? faultHook,
+  }) => database.transaction(() async {
+    final row = await database
+        .customSelect(
+          'SELECT note_id, format, title, draft_json, tags_json, '
+          'base_revision_ids_json, is_deleted, updated_at_ms '
+          'FROM notes WHERE note_id = ?',
+          variables: <Variable>[Variable.withString(noteId)],
+        )
+        .getSingleOrNull();
+    if (row == null) {
+      return null;
+    }
+    final current = _draftFromRow(row);
+    if (current.deleted == deleted) {
+      return null;
+    }
+    final heads = await noteHeads(noteId);
+    final changed = NoteDraft(
+      noteId: current.noteId,
+      format: current.format,
+      title: current.title,
+      body: current.body,
+      tags: current.tags,
+      baseRevisionIds: heads,
+      updatedAtUtc: clock().toUtc(),
+      deleted: deleted,
+    );
+    await saveDraft(changed);
+    if (await _isNoOpDraft(changed)) {
+      await database.customUpdate(
+        'UPDATE notes SET dirty = 0 WHERE note_id = ?',
+        variables: <Variable>[Variable.withString(noteId)],
+        updates: <TableInfo<Table, Object?>>{database.notes},
+      );
+      return null;
+    }
+    return _commitPreparedDraft(changed, faultHook: faultHook);
+  });
+
   Future<List<NoteDraft>> loadDirtyDrafts() async {
     final rows = await database
         .customSelect(
@@ -897,6 +946,18 @@ final class PersistentNoteStore {
         .customSelect(
           'SELECT note_id, title, body_text, format, is_deleted, updated_at_ms '
           'FROM notes WHERE is_deleted = 0 '
+          'ORDER BY updated_at_ms DESC, note_id LIMIT ?',
+          variables: <Variable>[Variable.withInt(limit)],
+        )
+        .get();
+    return List.unmodifiable(rows.map(_summaryFromRow));
+  }
+
+  Future<List<StoredNoteSummary>> deletedNotes({int limit = 100}) async {
+    final rows = await database
+        .customSelect(
+          'SELECT note_id, title, body_text, format, is_deleted, updated_at_ms '
+          'FROM notes WHERE is_deleted = 1 '
           'ORDER BY updated_at_ms DESC, note_id LIMIT ?',
           variables: <Variable>[Variable.withInt(limit)],
         )

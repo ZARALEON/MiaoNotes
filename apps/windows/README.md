@@ -26,6 +26,7 @@ by default.
 - idle Draft-to-Revision commit without blocking the editor;
 - visible count of immutable objects waiting for sync;
 - on-demand local FTS5 search across note titles and bodies with `Ctrl+F`;
+- confirmed soft deletion plus an on-demand recycle bin with safe restore;
 - new note button and `Ctrl+N`;
 - manual local version commit with `Ctrl+S`;
 - Windows-native executable shell.
