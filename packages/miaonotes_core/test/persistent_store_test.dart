@@ -46,6 +46,25 @@ void main() {
       expect(state.nextEventSequence, 1);
     });
 
+    test('search treats user input as safe prefix terms', () async {
+      await store.saveDraft(
+        _draft(
+          noteId: 'note-search',
+          body: 'buy milk after work',
+          updatedAtUtc: clock.call(),
+        ),
+      );
+
+      expect((await store.searchNotes('mil')).single.noteId, 'note-search');
+      expect(
+        (await store.searchNotes('milk work')).single.noteId,
+        'note-search',
+      );
+      expect((await store.searchNotes('mil !!!')).single.noteId, 'note-search');
+      expect(await store.searchNotes('!!!'), isEmpty);
+      expect(await store.searchNotes('milk "unterminated'), isEmpty);
+    });
+
     test(
       'export snapshot includes committed history and dirty drafts',
       () async {

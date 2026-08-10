@@ -45,6 +45,46 @@ void main() {
     expect(workspace.notes, hasLength(2));
   });
 
+  test('local search filters notes and clearing restores recents', () async {
+    final fixture = await _Fixture.open();
+    addTearDown(fixture.close);
+    final workspace = fixture.app.workspace;
+
+    workspace
+      ..updateTitle('Alpha')
+      ..updateBody('orchard checklist');
+    await workspace.flush();
+    await workspace.createNote();
+    workspace
+      ..updateTitle('Beta')
+      ..updateBody('ocean journal');
+    await workspace.flush();
+
+    await workspace.searchNotes('orch');
+    expect(workspace.searchState, NoteSearchState.idle);
+    expect(workspace.searchQuery, 'orch');
+    expect(workspace.notes.single.title, 'Alpha');
+
+    await workspace.searchNotes('');
+    expect(workspace.searchQuery, isEmpty);
+    expect(workspace.notes, hasLength(2));
+  });
+
+  test('creating a note leaves search mode', () async {
+    final fixture = await _Fixture.open();
+    addTearDown(fixture.close);
+    final workspace = fixture.app.workspace;
+
+    workspace.updateBody('searchable text');
+    await workspace.flush();
+    await workspace.searchNotes('search');
+    expect(workspace.searchQuery, 'search');
+
+    await workspace.createNote();
+    expect(workspace.searchQuery, isEmpty);
+    expect(workspace.currentDraft!.body, isEmpty);
+  });
+
   test('background work is opt-in, isolated, and starts once', () async {
     var starts = 0;
     final release = Completer<void>();
