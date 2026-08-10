@@ -1,5 +1,9 @@
 # MiaoNotes / 喵喵便签
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+> A lightweight, local-first notes app built for fast opening, fast capture, and safe synchronization.
+
 MiaoNotes is a local-first, lightweight notes application. Its Windows Flutter
 client and pure-Dart synchronization core are now being developed together while
 the editor remains independent from network availability.
