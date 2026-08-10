@@ -265,7 +265,10 @@ void main() {
     await tester.tap(find.byKey(const Key('sync-connect-button')));
     for (var attempt = 0; attempt < 50; attempt += 1) {
       await tester.pump(const Duration(milliseconds: 20));
-      if (find.byKey(const Key('sync-new-recovery-code')).evaluate().isNotEmpty) {
+      if (find
+          .byKey(const Key('sync-new-recovery-code'))
+          .evaluate()
+          .isNotEmpty) {
         break;
       }
     }

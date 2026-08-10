@@ -2,7 +2,13 @@ name: core-ci
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -12,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
@@ -24,7 +30,9 @@ jobs:
       - name: Verify generated database is current
         run: git diff --exit-code -- packages/miaonotes_core/lib/src/database/database.g.dart
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed .
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          packages/miaonotes_core tools/sync_simulator
       - name: Analyze
         run: |
           dart analyze packages/miaonotes_core
@@ -46,7 +54,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
