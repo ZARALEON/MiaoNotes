@@ -140,6 +140,50 @@ final class NoteWorkspaceController extends ChangeNotifier {
     }
   }
 
+  Future<bool> deleteCurrentNote() async {
+    final current = _currentDraft;
+    if (current == null || !await _flushBeforeNavigation()) {
+      return false;
+    }
+    final persisted = await store.loadDraft(current.noteId);
+    if (persisted != null) {
+      await store.setNoteDeleted(current.noteId, deleted: true);
+    }
+    _leaveSearchMode();
+    _notes = await store.recentNotes();
+    _currentDraft = _notes.isEmpty
+        ? _newDraft()
+        : await store.loadDraft(_notes.first.noteId);
+    _saveState = _currentDraft == null
+        ? DraftSaveState.idle
+        : DraftSaveState.saved;
+    _lastSavedAtUtc = _currentDraft?.updatedAtUtc;
+    _saveError = null;
+    _notify();
+    return true;
+  }
+
+  Future<List<StoredNoteSummary>> deletedNotes() => store.deletedNotes();
+
+  Future<bool> restoreDeletedNote(String noteId) async {
+    if (!await _flushBeforeNavigation()) {
+      return false;
+    }
+    final deleted = await store.loadDraft(noteId);
+    if (deleted == null || !deleted.deleted) {
+      return false;
+    }
+    await store.setNoteDeleted(noteId, deleted: false);
+    _leaveSearchMode();
+    _notes = await store.recentNotes();
+    _currentDraft = await store.loadDraft(noteId);
+    _saveState = DraftSaveState.saved;
+    _lastSavedAtUtc = _currentDraft?.updatedAtUtc;
+    _saveError = null;
+    _notify();
+    return true;
+  }
+
   Future<void> retrySave() async {
     final draft = _currentDraft;
     if (draft == null) {
@@ -164,12 +208,16 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _notes = await _loadVisibleNotes();
     if (currentId != null) {
       final refreshed = await store.loadDraft(currentId);
-      if (refreshed != null) {
+      if (refreshed != null && !refreshed.deleted) {
         _currentDraft = refreshed;
         _saveState = DraftSaveState.saved;
         _lastSavedAtUtc = refreshed.updatedAtUtc;
       } else if (_notes.isNotEmpty) {
         _currentDraft = await store.loadDraft(_notes.first.noteId);
+      } else {
+        _currentDraft = _newDraft();
+        _saveState = DraftSaveState.idle;
+        _lastSavedAtUtc = null;
       }
     } else if (_notes.isNotEmpty) {
       _currentDraft = await store.loadDraft(_notes.first.noteId);
@@ -461,6 +509,13 @@ final class NoteWorkspaceController extends ChangeNotifier {
   Future<List<StoredNoteSummary>> _loadVisibleNotes() => _searchQuery.isEmpty
       ? store.recentNotes()
       : store.searchNotes(_searchQuery);
+
+  void _leaveSearchMode() {
+    _searchGeneration += 1;
+    _searchQuery = '';
+    _searchState = NoteSearchState.idle;
+    _searchError = null;
+  }
 
   void _notify() {
     if (!_disposed) {

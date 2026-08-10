@@ -107,6 +107,13 @@ The sidebar exposes on-demand local full-text search over note titles and bodies
 Queries are debounced, safely converted to FTS5 prefix terms, and can be focused
 with `Ctrl+F`. Search never performs network I/O or joins the startup path.
 
+Recycle Bin v1 provides confirmed soft deletion and on-demand restoration. A
+note with existing history appends a synchronized tombstone Revision; restoring
+it appends a normal child Revision with the original content. A never-committed
+local note stays recoverable without announcing a meaningless remote deletion.
+The recycle bin is loaded only when opened, and permanent history deletion is
+not exposed.
+
 R2 secrets are intentionally absent from source code, SQLite, and configuration
 files. The Windows client stores them as a generic credential in the current
 user's Windows Credential Manager set through pure Dart FFI. Non-sensitive

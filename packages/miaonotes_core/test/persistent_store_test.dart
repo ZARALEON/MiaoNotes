@@ -65,6 +65,105 @@ void main() {
       expect(await store.searchNotes('milk "unterminated'), isEmpty);
     });
 
+    test('delete and restore append reversible protocol revisions', () async {
+      await store.saveDraft(
+        _draft(
+          noteId: 'note-recycle',
+          body: 'content survives deletion',
+          updatedAtUtc: clock.call(),
+        ),
+      );
+      final original = await store.commitDraft('note-recycle');
+
+      final deleted = await store.setNoteDeleted('note-recycle', deleted: true);
+      expect(deleted!.revision.operation, RevisionOperation.tombstone);
+      expect(deleted.revision.parentRevisionIds, <String>[
+        original!.revision.revisionId,
+      ]);
+      expect(await store.recentNotes(), isEmpty);
+      expect(await store.searchNotes('survives'), isEmpty);
+      expect((await store.deletedNotes()).single.noteId, 'note-recycle');
+
+      final restored = await store.setNoteDeleted(
+        'note-recycle',
+        deleted: false,
+      );
+      expect(restored!.revision.operation, RevisionOperation.upsert);
+      expect(restored.revision.parentRevisionIds, <String>[
+        deleted.revision.revisionId,
+      ]);
+      expect(restored.revision.body, 'content survives deletion');
+      expect((await store.recentNotes()).single.noteId, 'note-recycle');
+      expect(await store.deletedNotes(), isEmpty);
+      expect(
+        (await store.searchNotes('survives')).single.noteId,
+        'note-recycle',
+      );
+      expect((await store.recoveryState()).pendingObjects, 6);
+    });
+
+    test(
+      'deleting a never-committed note stays local until restored',
+      () async {
+        await store.saveDraft(
+          _draft(
+            noteId: 'local-only',
+            body: 'not announced remotely',
+            updatedAtUtc: clock.call(),
+          ),
+        );
+
+        expect(await store.setNoteDeleted('local-only', deleted: true), isNull);
+        expect((await store.deletedNotes()).single.noteId, 'local-only');
+        var recovery = await store.recoveryState();
+        expect(recovery.dirtyDrafts, 0);
+        expect(recovery.pendingObjects, 0);
+
+        final restored = await store.setNoteDeleted(
+          'local-only',
+          deleted: false,
+        );
+        expect(restored, isNotNull);
+        recovery = await store.recoveryState();
+        expect(recovery.revisions, 1);
+        expect(recovery.pendingObjects, 2);
+      },
+    );
+
+    test(
+      'delete rolls back its flag and protocol rows after a fault',
+      () async {
+        await store.saveDraft(
+          _draft(
+            noteId: 'delete-rollback',
+            body: 'must remain visible',
+            updatedAtUtc: clock.call(),
+          ),
+        );
+        final original = await store.commitDraft('delete-rollback');
+
+        await expectLater(
+          store.setNoteDeleted(
+            'delete-rollback',
+            deleted: true,
+            faultHook: () => throw StateError('injected delete crash'),
+          ),
+          throwsStateError,
+        );
+
+        expect((await store.loadDraft('delete-rollback'))!.deleted, isFalse);
+        expect((await store.recentNotes()).single.noteId, 'delete-rollback');
+        expect(await store.deletedNotes(), isEmpty);
+        expect(await store.noteHeads('delete-rollback'), <String>[
+          original!.revision.revisionId,
+        ]);
+        final recovery = await store.recoveryState();
+        expect(recovery.revisions, 1);
+        expect(recovery.pendingObjects, 2);
+        expect(recovery.nextEventSequence, 2);
+      },
+    );
+
     test(
       'export snapshot includes committed history and dirty drafts',
       () async {

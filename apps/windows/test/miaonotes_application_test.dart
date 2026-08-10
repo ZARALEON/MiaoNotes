@@ -85,6 +85,51 @@ void main() {
     expect(workspace.currentDraft!.body, isEmpty);
   });
 
+  test('deleted notes leave recents and restore with their content', () async {
+    final fixture = await _Fixture.open();
+    addTearDown(fixture.close);
+    final app = fixture.app;
+    final workspace = app.workspace;
+    final noteId = workspace.currentDraft!.noteId;
+
+    workspace
+      ..updateTitle('Recover me')
+      ..updateBody('recycle body');
+    await workspace.flush();
+    await app.localCommits.commitNow();
+
+    expect(await workspace.deleteCurrentNote(), isTrue);
+    expect(workspace.notes, isEmpty);
+    expect(workspace.currentDraft!.noteId, isNot(noteId));
+    expect((await workspace.deletedNotes()).single.noteId, noteId);
+
+    expect(await workspace.restoreDeletedNote(noteId), isTrue);
+    expect(workspace.currentDraft!.noteId, noteId);
+    expect(workspace.currentDraft!.title, 'Recover me');
+    expect(workspace.currentDraft!.body, 'recycle body');
+    expect((await app.store.recoveryState()).pendingObjects, 6);
+  });
+
+  test(
+    'remote deletion refresh never leaves a tombstone in the editor',
+    () async {
+      final fixture = await _Fixture.open();
+      addTearDown(fixture.close);
+      final app = fixture.app;
+      final deletedId = app.workspace.currentDraft!.noteId;
+
+      app.workspace.updateBody('deleted elsewhere');
+      await app.workspace.flush();
+      await app.localCommits.commitNow();
+      await app.store.setNoteDeleted(deletedId, deleted: true);
+
+      await app.workspace.refreshAfterRemotePull();
+      expect(app.workspace.currentDraft!.noteId, isNot(deletedId));
+      expect(app.workspace.currentDraft!.deleted, isFalse);
+      expect(app.workspace.notes, isEmpty);
+    },
+  );
+
   test('background work is opt-in, isolated, and starts once', () async {
     var starts = 0;
     final release = Completer<void>();

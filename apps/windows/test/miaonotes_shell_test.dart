@@ -115,6 +115,46 @@ void main() {
     await app.close();
   });
 
+  testWidgets('delete confirmation and recycle bin restore a note', (
+    tester,
+  ) async {
+    final app = await _openTestApplication();
+    final noteId = app.workspace.currentDraft!.noteId;
+    app.workspace
+      ..updateTitle('Recover me')
+      ..updateBody('recycle body');
+    await app.workspace.flush();
+    await app.localCommits.commitNow();
+
+    await tester.pumpWidget(
+      MiaoNotesShell(workspace: app.workspace, localCommits: app.localCommits),
+    );
+    await tester.tap(find.byKey(const Key('delete-note-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('删除这条便签？'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('confirm-delete-note')));
+    await tester.pumpAndSettle();
+    expect(app.workspace.notes, isEmpty);
+
+    await tester.tap(find.byKey(const Key('recycle-bin-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('recycle-bin-dialog')), findsOneWidget);
+    expect(
+      find.byKey(ValueKey<String>('deleted-note-$noteId')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(ValueKey<String>('restore-note-$noteId')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('recycle-bin-dialog')), findsNothing);
+    expect(app.workspace.currentDraft!.noteId, noteId);
+    expect(app.workspace.currentDraft!.body, 'recycle body');
+    expect(find.byKey(ValueKey<String>('note-list-$noteId')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await app.close();
+  });
+
   testWidgets('bootstrap renders local workspace before background work', (
     tester,
   ) async {
