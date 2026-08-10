@@ -74,5 +74,6 @@ attachments, or automatically change external sync configuration.
 Core tests cover history restoration, search materialization, durable requeue,
 missing-parent rejection, and full rollback after an injected fault. Windows
 tests cover export-to-import round trips, post-preview tampering, undeclared
-files, inconsistent counts, workspace refresh, and the visible preview and
-confirmation flow.
+files, inconsistent counts, workspace refresh, and the visible import entry
+point. The dialog keeps bounded progress states while service and Core tests own
+the filesystem and transaction matrix.
