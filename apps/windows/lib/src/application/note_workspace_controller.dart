@@ -132,6 +132,23 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _notify();
   }
 
+  /// Replaces the initial unsaved editor with a freshly imported local view.
+  Future<void> refreshAfterImport() async {
+    if (_pendingSave != null || _saveLoop != null || _commitInProgress) {
+      throw StateError('Cannot refresh the workspace while a save is active');
+    }
+    _notes = await store.recentNotes();
+    _currentDraft = _notes.isEmpty
+        ? _newDraft()
+        : await store.loadDraft(_notes.first.noteId);
+    _saveState = _currentDraft == null
+        ? DraftSaveState.idle
+        : DraftSaveState.saved;
+    _lastSavedAtUtc = _currentDraft?.updatedAtUtc;
+    _saveError = null;
+    _notify();
+  }
+
   Future<CommittedRevisionBundle> resolveConflict({
     required String conflictId,
     required ContentFormat format,

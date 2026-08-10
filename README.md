@@ -137,7 +137,10 @@ immutable Revision history, and conflict records to a new directory under
 the temporary directory is published only after a complete verification pass.
 The export is deliberately readable plaintext and never contains passwords,
 recovery keys, Vault master keys, or R2 credentials. Verified import remains a
-separate later phase.
+separate explicit action: it revalidates every manifest entry, previews counts
+and Vault identity, and restores only into an empty local Vault with no active
+sync profile. Core rebuilds the Revision DAG and sync outbox in one SQLite
+transaction, so a failed or tampered import leaves no partial data.
 
 The persistent release gate covers three-device convergence, concurrent heads,
 ambiguous upload responses, offline restart recovery, corrupt remote objects, and

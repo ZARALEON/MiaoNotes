@@ -10,6 +10,7 @@ import '../application/remote_sync_coordinator.dart';
 import '../application/sync_settings_controller.dart';
 import 'conflict_center_dialog.dart';
 import 'export_dialog.dart';
+import 'import_dialog.dart';
 import 'sync_settings_dialog.dart';
 
 ThemeData buildMiaoNotesTheme() {
@@ -196,6 +197,19 @@ final class _NotesSidebar extends StatelessWidget {
                         unawaited(showSyncSettingsDialog(context, settings)),
                     icon: const Icon(Icons.cloud_outlined, size: 20),
                   ),
+                IconButton(
+                  key: const Key('import-notes-button'),
+                  tooltip: '从备份恢复',
+                  onPressed: () => unawaited(
+                    showVaultImportDialog(
+                      context,
+                      workspace: workspace,
+                      localCommits: localCommits,
+                      syncSettings: syncSettings,
+                    ),
+                  ),
+                  icon: const Icon(Icons.settings_backup_restore, size: 20),
+                ),
                 IconButton(
                   key: const Key('export-notes-button'),
                   tooltip: '导出与备份',

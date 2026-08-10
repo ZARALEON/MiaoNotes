@@ -94,6 +94,268 @@ void main() {
     );
 
     test(
+      'portable import restores history and queues it for synchronization',
+      () async {
+        await store.saveDraft(
+          _draft(
+            noteId: 'restored-note',
+            body: 'first version',
+            updatedAtUtc: clock.call(),
+          ),
+        );
+        final first = await store.commitDraft('restored-note');
+        await store.saveDraft(
+          _draft(
+            noteId: 'restored-note',
+            body: 'second version',
+            baseRevisionIds: <String>[first!.revision.revisionId],
+            updatedAtUtc: clock.call(),
+          ),
+        );
+        final second = await store.commitDraft('restored-note');
+        await store.saveDraft(
+          _draft(
+            noteId: 'restored-note',
+            body: 'latest dirty text',
+            baseRevisionIds: <String>[second!.revision.revisionId],
+            updatedAtUtc: clock.call(),
+          ),
+        );
+        final snapshot = await store.createExportSnapshot();
+        final targetDatabase = MiaoNotesDatabase.inMemory();
+        final target = PersistentNoteStore(
+          database: targetDatabase,
+          idFactory: SequenceIdFactory('import'),
+          clock: clock.call,
+        );
+        await target.initializeVault(
+          vault: VaultIdentity(
+            vaultId: 'placeholder',
+            generation: 1,
+            createdAtUtc: clock.call(),
+          ),
+          deviceId: 'restore-device',
+          deviceName: 'Restore test',
+        );
+        addTearDown(targetDatabase.close);
+
+        final result = await target.importPortableSnapshot(snapshot);
+
+        expect(result.noteCount, 1);
+        expect(result.revisionCount, 2);
+        expect(result.queuedObjectCount, 4);
+        expect((await target.vaultIdentity()).vaultId, _vault.vaultId);
+        expect(
+          (await target.loadDraft('restored-note'))!.body,
+          'latest dirty text',
+        );
+        expect(await target.noteHeads('restored-note'), <String>[
+          second.revision.revisionId,
+        ]);
+        expect(await target.searchNotes('latest'), hasLength(1));
+        final recovery = await target.recoveryState();
+        expect(recovery.dirtyDrafts, 1);
+        expect(recovery.revisions, 2);
+        expect(recovery.pendingObjects, 4);
+        expect(recovery.nextEventSequence, 3);
+      },
+    );
+
+    test(
+      'portable import rolls back every row after an injected fault',
+      () async {
+        await store.saveDraft(
+          _draft(
+            noteId: 'rollback-note',
+            body: 'committed',
+            updatedAtUtc: clock.call(),
+          ),
+        );
+        await store.commitDraft('rollback-note');
+        final snapshot = await store.createExportSnapshot();
+        final targetDatabase = MiaoNotesDatabase.inMemory();
+        final target = PersistentNoteStore(
+          database: targetDatabase,
+          idFactory: SequenceIdFactory('rollback'),
+          clock: clock.call,
+        );
+        await target.initializeVault(
+          vault: VaultIdentity(
+            vaultId: 'placeholder',
+            generation: 1,
+            createdAtUtc: clock.call(),
+          ),
+          deviceId: 'restore-device',
+          deviceName: 'Restore test',
+        );
+        addTearDown(targetDatabase.close);
+
+        await expectLater(
+          target.importPortableSnapshot(
+            snapshot,
+            applyHook: (_) => throw StateError('injected import failure'),
+          ),
+          throwsStateError,
+        );
+
+        expect((await target.vaultIdentity()).vaultId, 'placeholder');
+        final recovery = await target.recoveryState();
+        expect(recovery.revisions, 0);
+        expect(recovery.pendingObjects, 0);
+        expect(recovery.nextEventSequence, 1);
+        expect(await target.recentNotes(), isEmpty);
+      },
+    );
+
+    test('portable import rejects history with a missing parent', () async {
+      await store.saveDraft(
+        _draft(
+          noteId: 'broken-note',
+          body: 'first',
+          updatedAtUtc: clock.call(),
+        ),
+      );
+      final first = await store.commitDraft('broken-note');
+      await store.saveDraft(
+        _draft(
+          noteId: 'broken-note',
+          body: 'second',
+          baseRevisionIds: <String>[first!.revision.revisionId],
+          updatedAtUtc: clock.call(),
+        ),
+      );
+      final second = await store.commitDraft('broken-note');
+      final valid = await store.createExportSnapshot();
+      final broken = ExportSnapshot(
+        vault: valid.vault,
+        exportedAtUtc: valid.exportedAtUtc,
+        notes: valid.notes,
+        revisions: <Revision>[second!.revision],
+        conflicts: valid.conflicts,
+      );
+      final targetDatabase = MiaoNotesDatabase.inMemory();
+      final target = PersistentNoteStore(
+        database: targetDatabase,
+        idFactory: SequenceIdFactory('broken'),
+        clock: clock.call,
+      );
+      await target.initializeVault(
+        vault: VaultIdentity(
+          vaultId: 'placeholder',
+          generation: 1,
+          createdAtUtc: clock.call(),
+        ),
+        deviceId: 'restore-device',
+        deviceName: 'Restore test',
+      );
+      addTearDown(targetDatabase.close);
+
+      await expectLater(
+        target.importPortableSnapshot(broken),
+        throwsA(isA<PortableImportException>()),
+      );
+      expect(await target.recentNotes(), isEmpty);
+    });
+
+    test(
+      'portable import reconstructs concurrent heads and open conflict',
+      () async {
+        final createdAt = clock.call();
+        final leftDraft = _draft(
+          noteId: 'conflicted-note',
+          body: 'left version',
+          updatedAtUtc: createdAt,
+        );
+        final rightDraft = _draft(
+          noteId: 'conflicted-note',
+          body: 'right version',
+          updatedAtUtc: createdAt,
+        );
+        final left = Revision.create(
+          vaultId: _vault.vaultId,
+          vaultGeneration: _vault.generation,
+          revisionId: 'left-revision',
+          deviceId: 'left-device',
+          createdAtUtc: createdAt,
+          draft: leftDraft,
+        );
+        final right = Revision.create(
+          vaultId: _vault.vaultId,
+          vaultGeneration: _vault.generation,
+          revisionId: 'right-revision',
+          deviceId: 'right-device',
+          createdAtUtc: createdAt,
+          draft: rightDraft,
+        );
+        final snapshot = ExportSnapshot(
+          vault: _vault,
+          exportedAtUtc: createdAt,
+          notes: <ExportNoteState>[
+            ExportNoteState(
+              draft: NoteDraft(
+                noteId: leftDraft.noteId,
+                format: leftDraft.format,
+                title: leftDraft.title,
+                body: leftDraft.body,
+                tags: leftDraft.tags,
+                baseRevisionIds: const <String>[
+                  'left-revision',
+                  'right-revision',
+                ],
+                updatedAtUtc: createdAt,
+              ),
+              createdAtUtc: createdAt,
+              dirty: false,
+              lastCommittedRevisionId: left.revisionId,
+            ),
+          ],
+          revisions: <Revision>[left, right],
+          conflicts: <ExportConflictRecord>[
+            ExportConflictRecord(
+              conflictId: 'open-conflict',
+              noteId: left.noteId,
+              headRevisionIds: const <String>[
+                'left-revision',
+                'right-revision',
+              ],
+              status: ExportConflictStatus.open,
+              createdAtUtc: createdAt,
+            ),
+          ],
+        );
+        final targetDatabase = MiaoNotesDatabase.inMemory();
+        final target = PersistentNoteStore(
+          database: targetDatabase,
+          idFactory: SequenceIdFactory('conflict-import'),
+          clock: clock.call,
+        );
+        await target.initializeVault(
+          vault: VaultIdentity(
+            vaultId: 'placeholder',
+            generation: 1,
+            createdAtUtc: createdAt,
+          ),
+          deviceId: 'restore-device',
+          deviceName: 'Restore test',
+        );
+        addTearDown(targetDatabase.close);
+
+        final result = await target.importPortableSnapshot(snapshot);
+
+        expect(result.conflictCount, 1);
+        expect(await target.noteHeads('conflicted-note'), <String>[
+          'left-revision',
+          'right-revision',
+        ]);
+        expect(
+          (await target.openConflicts()).single.conflictId,
+          'open-conflict',
+        );
+        expect((await target.recoveryState()).openConflicts, 1);
+      },
+    );
+
+    test(
       'commit atomically creates revision, event, heads, and outbox',
       () async {
         await store.saveDraft(
