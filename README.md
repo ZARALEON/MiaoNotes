@@ -58,6 +58,26 @@ flutter test
 flutter build windows --release
 ```
 
+## Cloud builds and releases
+
+GitHub Actions is the authoritative build environment, so a local machine can be
+used primarily as a code editor. Pull requests validate Core and Windows. Every
+green push to `main` also provides a seven-day Windows snapshot under that
+workflow run's **Artifacts** section.
+
+Maintainers publish a version by first updating `apps/windows/pubspec.yaml`,
+merging the change into a green `main`, and then pushing the matching
+`vMAJOR.MINOR.PATCH` tag. The tag workflow repeats all release gates and creates a
+GitHub Release containing:
+
+- `MiaoNotes-vMAJOR.MINOR.PATCH-windows-x64-portable.zip`;
+- the corresponding `.sha256` checksum.
+
+Extract the complete ZIP before starting MiaoNotes; the executable depends on
+the DLL and `data` files beside it. Current `v0.*` packages are unsigned
+prereleases and may display a Windows reputation warning. No R2 or Vault secret
+is stored in GitHub Actions.
+
 The SQLite source of truth is `packages/miaonotes_core/schema/schema_v1.sql`.
 Its Drift mirror is checked for exact parity, and generated database types are
 committed. Product startup does not run code generation.

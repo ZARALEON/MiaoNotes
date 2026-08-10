@@ -1,20 +1,19 @@
-name: core-ci
+name: release
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    tags:
+      - 'v*'
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  core:
+  verify-core:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,15 +49,38 @@ jobs:
         working-directory: packages/miaonotes_core
         run: dart run benchmark/persistence_benchmark.dart
 
-  windows:
+  windows-release:
+    needs: verify-core
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.44.9
           cache: true
+      - name: Validate tag and application version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Release tag must use the exact vMAJOR.MINOR.PATCH form: $tag"
+          }
+
+          $pubspec = Get-Content 'apps/windows/pubspec.yaml' -Raw
+          $match = [regex]::Match(
+            $pubspec,
+            '(?m)^version:\s*(\d+\.\d+\.\d+)(?:\+\d+)?\s*$'
+          )
+          if (-not $match.Success) {
+            throw 'Unable to read the application version from pubspec.yaml.'
+          }
+
+          $tagVersion = $tag.Substring(1)
+          $appVersion = $match.Groups[1].Value
+          if ($tagVersion -ne $appVersion) {
+            throw "Tag $tag does not match application version $appVersion."
+          }
       - name: Resolve Windows application
         working-directory: apps/windows
         run: flutter pub get
@@ -74,15 +96,13 @@ jobs:
       - name: Build Windows release
         working-directory: apps/windows
         run: flutter build windows --release
-      - name: Package Windows snapshot
-        if: github.event_name == 'push'
-        id: package_snapshot
+      - name: Package release assets
+        id: package_release
         working-directory: apps/windows
         shell: pwsh
         run: |
-          $shortSha = $env:GITHUB_SHA.Substring(0, 12)
           $dist = 'dist'
-          $archive = "$dist/MiaoNotes-main-$shortSha-windows-x64-portable.zip"
+          $archive = "$dist/MiaoNotes-$env:GITHUB_REF_NAME-windows-x64-portable.zip"
           $checksum = "$archive.sha256"
           $releaseDirectory = 'build/windows/x64/runner/Release'
 
@@ -103,13 +123,31 @@ jobs:
 
           "archive=$archive" >> $env:GITHUB_OUTPUT
           "checksum=$checksum" >> $env:GITHUB_OUTPUT
-      - name: Upload Windows snapshot
-        if: github.event_name == 'push'
+      - name: Upload immutable workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MiaoNotes-windows-x64-${{ github.sha }}
+          name: MiaoNotes-${{ github.ref_name }}-windows-x64
           path: |
-            apps/windows/${{ steps.package_snapshot.outputs.archive }}
-            apps/windows/${{ steps.package_snapshot.outputs.checksum }}
+            apps/windows/${{ steps.package_release.outputs.archive }}
+            apps/windows/${{ steps.package_release.outputs.checksum }}
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: apps/windows/${{ steps.package_release.outputs.archive }}
+          CHECKSUM: apps/windows/${{ steps.package_release.outputs.checksum }}
+        shell: pwsh
+        run: |
+          $releaseArgs = @(
+            'release', 'create', $env:GITHUB_REF_NAME,
+            $env:ARCHIVE, $env:CHECKSUM,
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--verify-tag',
+            '--generate-notes',
+            '--title', "MiaoNotes $env:GITHUB_REF_NAME"
+          )
+          if ($env:GITHUB_REF_NAME.StartsWith('v0.')) {
+            $releaseArgs += '--prerelease'
+          }
+          & gh @releaseArgs
