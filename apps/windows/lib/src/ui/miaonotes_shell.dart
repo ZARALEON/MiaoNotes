@@ -11,8 +11,10 @@ import '../application/sync_settings_controller.dart';
 import 'conflict_center_dialog.dart';
 import 'export_dialog.dart';
 import 'import_dialog.dart';
+import 'note_tag_editor.dart';
 import 'recycle_bin_dialog.dart';
 import 'sync_settings_dialog.dart';
+import 'tag_filter_dialog.dart';
 
 ThemeData buildMiaoNotesTheme() {
   const seed = Color(0xffb65365);
@@ -235,86 +237,120 @@ final class _NotesSidebar extends StatelessWidget {
         children: <Widget>[
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 14, 14),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const Expanded(
-                  child: Text(
-                    '喵喵便签',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ),
-                if (localCommits.openConflicts > 0)
-                  Badge(
-                    label: Text('${localCommits.openConflicts}'),
-                    child: IconButton(
-                      key: const Key('conflict-center-button'),
-                      tooltip: '处理同步冲突',
-                      onPressed: () => unawaited(
-                        showConflictCenterDialog(
-                          context,
-                          workspace: workspace,
-                          localCommits: localCommits,
+                Row(
+                  children: <Widget>[
+                    const Expanded(
+                      child: Text(
+                        '喵喵便签',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
                         ),
                       ),
-                      icon: const Icon(Icons.call_split, size: 20),
                     ),
-                  ),
-                if (syncSettings case final settings?)
-                  IconButton(
-                    key: const Key('sync-settings-button'),
-                    tooltip: '同步设置',
-                    onPressed: () =>
-                        unawaited(showSyncSettingsDialog(context, settings)),
-                    icon: const Icon(Icons.cloud_outlined, size: 20),
-                  ),
-                IconButton(
-                  key: const Key('recycle-bin-button'),
-                  tooltip: '回收站',
-                  onPressed: () => unawaited(() async {
-                    final restored = await showRecycleBinDialog(
-                      context,
-                      workspace: workspace,
-                      localCommits: localCommits,
-                    );
-                    if (restored) {
-                      searchController.clear();
-                    }
-                  }()),
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                ),
-                IconButton(
-                  key: const Key('import-notes-button'),
-                  tooltip: '从备份恢复',
-                  onPressed: () => unawaited(
-                    showVaultImportDialog(
-                      context,
-                      workspace: workspace,
-                      localCommits: localCommits,
-                      syncSettings: syncSettings,
+                    IconButton.filledTonal(
+                      key: const Key('new-note-button'),
+                      tooltip: '新建便签  Ctrl+N',
+                      onPressed: () {
+                        searchController.clear();
+                        unawaited(_ignoreFailure(workspace.createNote()));
+                      },
+                      icon: const Icon(Icons.add, size: 20),
                     ),
-                  ),
-                  icon: const Icon(Icons.settings_backup_restore, size: 20),
+                  ],
                 ),
-                IconButton(
-                  key: const Key('export-notes-button'),
-                  tooltip: '导出与备份',
-                  onPressed: () => unawaited(
-                    showVaultExportDialog(context, workspace: workspace),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    spacing: 0,
+                    runSpacing: 0,
+                    alignment: WrapAlignment.end,
+                    children: <Widget>[
+                      if (localCommits.openConflicts > 0)
+                        Badge(
+                          label: Text('${localCommits.openConflicts}'),
+                          child: IconButton(
+                            key: const Key('conflict-center-button'),
+                            tooltip: '处理同步冲突',
+                            onPressed: () => unawaited(
+                              showConflictCenterDialog(
+                                context,
+                                workspace: workspace,
+                                localCommits: localCommits,
+                              ),
+                            ),
+                            icon: const Icon(Icons.call_split, size: 20),
+                          ),
+                        ),
+                      if (syncSettings case final settings?)
+                        IconButton(
+                          key: const Key('sync-settings-button'),
+                          tooltip: '同步设置',
+                          onPressed: () => unawaited(
+                            showSyncSettingsDialog(context, settings),
+                          ),
+                          icon: const Icon(Icons.cloud_outlined, size: 20),
+                        ),
+                      IconButton(
+                        key: const Key('tag-filter-button'),
+                        tooltip: '按标签筛选',
+                        onPressed: () => unawaited(() async {
+                          final selection = await showTagFilterDialog(
+                            context,
+                            workspace: workspace,
+                          );
+                          if (selection != null) {
+                            await workspace.selectTag(selection.tag);
+                          }
+                        }()),
+                        icon: const Icon(Icons.label_outline, size: 20),
+                      ),
+                      IconButton(
+                        key: const Key('recycle-bin-button'),
+                        tooltip: '回收站',
+                        onPressed: () => unawaited(() async {
+                          final restored = await showRecycleBinDialog(
+                            context,
+                            workspace: workspace,
+                            localCommits: localCommits,
+                          );
+                          if (restored) {
+                            searchController.clear();
+                          }
+                        }()),
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                      ),
+                      IconButton(
+                        key: const Key('import-notes-button'),
+                        tooltip: '从备份恢复',
+                        onPressed: () => unawaited(
+                          showVaultImportDialog(
+                            context,
+                            workspace: workspace,
+                            localCommits: localCommits,
+                            syncSettings: syncSettings,
+                          ),
+                        ),
+                        icon: const Icon(
+                          Icons.settings_backup_restore,
+                          size: 20,
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('export-notes-button'),
+                        tooltip: '导出与备份',
+                        onPressed: () => unawaited(
+                          showVaultExportDialog(context, workspace: workspace),
+                        ),
+                        icon: const Icon(Icons.save_alt_outlined, size: 20),
+                      ),
+                    ],
                   ),
-                  icon: const Icon(Icons.save_alt_outlined, size: 20),
-                ),
-                IconButton.filledTonal(
-                  key: const Key('new-note-button'),
-                  tooltip: '新建便签  Ctrl+N',
-                  onPressed: () {
-                    searchController.clear();
-                    unawaited(_ignoreFailure(workspace.createNote()));
-                  },
-                  icon: const Icon(Icons.add, size: 20),
                 ),
               ],
             ),
@@ -324,6 +360,20 @@ final class _NotesSidebar extends StatelessWidget {
             focusNode: searchFocus,
             workspace: workspace,
           ),
+          if (workspace.selectedTag case final tag?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: InputChip(
+                  key: const Key('active-tag-filter'),
+                  label: Text('#$tag'),
+                  tooltip: '清除标签筛选',
+                  onDeleted: () => unawaited(workspace.selectTag(null)),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
           const Divider(),
           Expanded(
             child: notes.isEmpty
@@ -650,6 +700,11 @@ final class _NoteEditorState extends State<_NoteEditor> {
               icon: const Icon(Icons.delete_outline, size: 20),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        NoteTagEditor(
+          tags: widget.draft.tags,
+          onChanged: widget.workspace.updateTags,
         ),
         const SizedBox(height: 18),
         Expanded(
