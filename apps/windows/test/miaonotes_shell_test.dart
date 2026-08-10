@@ -155,6 +155,51 @@ void main() {
     await app.close();
   });
 
+  testWidgets('tag editor and on-demand filter narrow the sidebar', (
+    tester,
+  ) async {
+    final app = await _openTestApplication();
+    final workId = app.workspace.currentDraft!.noteId;
+    app.workspace
+      ..updateTitle('Work note')
+      ..updateBody('roadmap')
+      ..updateTags(const <String>['work']);
+    await app.workspace.flush();
+    await app.workspace.createNote();
+    final personalId = app.workspace.currentDraft!.noteId;
+    app.workspace
+      ..updateTitle('Personal note')
+      ..updateBody('journal')
+      ..updateTags(const <String>['personal']);
+    await app.workspace.flush();
+
+    await tester.pumpWidget(
+      MiaoNotesShell(workspace: app.workspace, localCommits: app.localCommits),
+    );
+    await tester.enterText(find.byKey(const Key('note-tag-field')), 'urgent');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await app.workspace.flush();
+    expect(app.workspace.currentDraft!.tags, <String>['personal', 'urgent']);
+    expect(
+      find.byKey(const ValueKey<String>('note-tag-urgent')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('tag-filter-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tag-filter-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('tag-option-work')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('active-tag-filter')), findsOneWidget);
+    expect(find.byKey(ValueKey<String>('note-list-$workId')), findsOneWidget);
+    expect(find.byKey(ValueKey<String>('note-list-$personalId')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await app.close();
+  });
+
   testWidgets('bootstrap renders local workspace before background work', (
     tester,
   ) async {

@@ -69,6 +69,13 @@ final class StoredNoteSummary {
   final bool deleted;
 }
 
+final class StoredTagSummary {
+  const StoredTagSummary({required this.tag, required this.noteCount});
+
+  final String tag;
+  final int noteCount;
+}
+
 final class StoredConflict {
   const StoredConflict({
     required this.conflictId,
@@ -941,16 +948,47 @@ final class PersistentNoteStore {
     );
   }
 
-  Future<List<StoredNoteSummary>> recentNotes({int limit = 50}) async {
+  Future<List<StoredNoteSummary>> recentNotes({
+    int limit = 50,
+    String? tag,
+  }) async {
+    final tagFilter = _normalizedTagFilter(tag);
     final rows = await database
         .customSelect(
           'SELECT note_id, title, body_text, format, is_deleted, updated_at_ms '
-          'FROM notes WHERE is_deleted = 0 '
+          'FROM notes n WHERE is_deleted = 0 '
+          '${tagFilter == null ? '' : 'AND EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE value = ?) '} '
           'ORDER BY updated_at_ms DESC, note_id LIMIT ?',
-          variables: <Variable>[Variable.withInt(limit)],
+          variables: <Variable>[
+            if (tagFilter != null) Variable.withString(tagFilter),
+            Variable.withInt(limit),
+          ],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{database.notes},
         )
         .get();
     return List.unmodifiable(rows.map(_summaryFromRow));
+  }
+
+  Future<List<StoredTagSummary>> tagSummaries({int limit = 200}) async {
+    final rows = await database
+        .customSelect(
+          'SELECT j.value AS tag, COUNT(*) AS note_count '
+          'FROM notes n, json_each(n.tags_json) j '
+          'WHERE n.is_deleted = 0 AND typeof(j.value) = \'text\' '
+          'GROUP BY j.value '
+          'ORDER BY j.value COLLATE NOCASE, j.value LIMIT ?',
+          variables: <Variable>[Variable.withInt(limit)],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{database.notes},
+        )
+        .get();
+    return List.unmodifiable(
+      rows.map(
+        (row) => StoredTagSummary(
+          tag: row.read<String>('tag'),
+          noteCount: row.read<int>('note_count'),
+        ),
+      ),
+    );
   }
 
   Future<List<StoredNoteSummary>> deletedNotes({int limit = 100}) async {
@@ -968,23 +1006,27 @@ final class PersistentNoteStore {
   Future<List<StoredNoteSummary>> searchNotes(
     String query, {
     int limit = 50,
+    String? tag,
   }) async {
     if (query.trim().isEmpty) {
-      return recentNotes(limit: limit);
+      return recentNotes(limit: limit, tag: tag);
     }
     final ftsQuery = _safeFtsPrefixQuery(query);
     if (ftsQuery.isEmpty) {
       return const <StoredNoteSummary>[];
     }
+    final tagFilter = _normalizedTagFilter(tag);
     final rows = await database
         .customSelect(
           'SELECT n.note_id, n.title, n.body_text, n.format, '
           'n.is_deleted, n.updated_at_ms FROM notes_fts f '
           'JOIN notes n ON n.note_id = f.note_id '
           'WHERE notes_fts MATCH ? AND n.is_deleted = 0 '
+          '${tagFilter == null ? '' : 'AND EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE value = ?) '} '
           'ORDER BY bm25(notes_fts), n.updated_at_ms DESC LIMIT ?',
           variables: <Variable>[
             Variable.withString(ftsQuery),
+            if (tagFilter != null) Variable.withString(tagFilter),
             Variable.withInt(limit),
           ],
           readsFrom: <ResultSetImplementation<Table, Object?>>{
@@ -1756,4 +1798,9 @@ String _safeFtsPrefixQuery(String query) {
       .where((term) => searchableCharacter.hasMatch(term))
       .map((term) => '"${term.replaceAll('"', '""')}"*')
       .join(' AND ');
+}
+
+String? _normalizedTagFilter(String? tag) {
+  final normalized = tag?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
 }

@@ -70,6 +70,35 @@ void main() {
     expect(workspace.notes, hasLength(2));
   });
 
+  test('tag filters compose with search and seed new notes', () async {
+    final fixture = await _Fixture.open();
+    addTearDown(fixture.close);
+    final workspace = fixture.app.workspace;
+
+    workspace
+      ..updateTitle('Work alpha')
+      ..updateBody('shared keyword')
+      ..updateTags(const <String>['work', 'urgent']);
+    await workspace.flush();
+    await workspace.createNote();
+    workspace
+      ..updateTitle('Personal alpha')
+      ..updateBody('shared keyword')
+      ..updateTags(const <String>['personal']);
+    await workspace.flush();
+
+    await workspace.selectTag('work');
+    expect(workspace.selectedTag, 'work');
+    expect(workspace.notes.single.title, 'Work alpha');
+    await workspace.searchNotes('shared');
+    expect(workspace.notes.single.title, 'Work alpha');
+
+    await workspace.createNote();
+    expect(workspace.searchQuery, isEmpty);
+    expect(workspace.selectedTag, 'work');
+    expect(workspace.currentDraft!.tags, <String>['work']);
+  });
+
   test('creating a note leaves search mode', () async {
     final fixture = await _Fixture.open();
     addTearDown(fixture.close);

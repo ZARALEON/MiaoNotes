@@ -27,6 +27,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
   String _searchQuery = '';
   NoteSearchState _searchState = NoteSearchState.idle;
   Object? _searchError;
+  String? _selectedTag;
   int _searchGeneration = 0;
   NoteDraft? _pendingSave;
   Future<void>? _saveLoop;
@@ -44,6 +45,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
   String get searchQuery => _searchQuery;
   NoteSearchState get searchState => _searchState;
   Object? get searchError => _searchError;
+  String? get selectedTag => _selectedTag;
   bool get initialized => _initialized;
   bool get commitInProgress => _commitInProgress;
   int get localSaveGeneration => _localSaveGeneration;
@@ -71,7 +73,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
       _searchQuery = '';
       _searchState = NoteSearchState.idle;
       _searchError = null;
-      _notes = await store.recentNotes();
+      _notes = await store.recentNotes(tag: _selectedTag);
     }
     _currentDraft = _newDraft();
     _saveState = DraftSaveState.idle;
@@ -85,7 +87,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
     }
     final selected = await store.loadDraft(noteId);
     if (selected == null) {
-      _notes = await store.recentNotes();
+      _notes = await _loadVisibleNotes();
       _notify();
       return;
     }
@@ -111,6 +113,27 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _replaceDraft(title: draft.title, body: body);
   }
 
+  void updateTags(Iterable<String> tags) {
+    final draft = _currentDraft;
+    if (draft == null) {
+      return;
+    }
+    final normalized = NoteDraft(
+      noteId: draft.noteId,
+      format: draft.format,
+      title: draft.title,
+      body: draft.body,
+      tags: tags,
+      baseRevisionIds: draft.baseRevisionIds,
+      updatedAtUtc: draft.updatedAtUtc,
+      deleted: draft.deleted,
+    ).tags;
+    if (listEquals(draft.tags, normalized)) {
+      return;
+    }
+    _replaceDraft(title: draft.title, body: draft.body, tags: normalized);
+  }
+
   /// Runs an on-demand local FTS query. Generation checks prevent a slower
   /// previous query from replacing newer results while the user keeps typing.
   Future<void> searchNotes(String query) async {
@@ -122,8 +145,43 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _notify();
     try {
       final results = normalized.isEmpty
-          ? await store.recentNotes()
-          : await store.searchNotes(normalized);
+          ? await store.recentNotes(tag: _selectedTag)
+          : await store.searchNotes(normalized, tag: _selectedTag);
+      if (generation != _searchGeneration) {
+        return;
+      }
+      _notes = results;
+      _searchState = NoteSearchState.idle;
+      _notify();
+    } on Object catch (error) {
+      if (generation != _searchGeneration) {
+        return;
+      }
+      _searchError = error;
+      _searchState = NoteSearchState.failed;
+      _notify();
+    }
+  }
+
+  Future<List<StoredTagSummary>> tagSummaries() => store.tagSummaries();
+
+  Future<void> selectTag(String? tag) async {
+    final normalized = tag?.trim();
+    final selected = normalized == null || normalized.isEmpty
+        ? null
+        : normalized;
+    if (_selectedTag == selected) {
+      return;
+    }
+    final generation = ++_searchGeneration;
+    _selectedTag = selected;
+    _searchState = NoteSearchState.searching;
+    _searchError = null;
+    _notify();
+    try {
+      final results = _searchQuery.isEmpty
+          ? await store.recentNotes(tag: selected)
+          : await store.searchNotes(_searchQuery, tag: selected);
       if (generation != _searchGeneration) {
         return;
       }
@@ -150,7 +208,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
       await store.setNoteDeleted(current.noteId, deleted: true);
     }
     _leaveSearchMode();
-    _notes = await store.recentNotes();
+    _notes = await store.recentNotes(tag: _selectedTag);
     _currentDraft = _notes.isEmpty
         ? _newDraft()
         : await store.loadDraft(_notes.first.noteId);
@@ -174,7 +232,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
       return false;
     }
     await store.setNoteDeleted(noteId, deleted: false);
-    _leaveSearchMode();
+    _leaveBrowseFilters();
     _notes = await store.recentNotes();
     _currentDraft = await store.loadDraft(noteId);
     _saveState = DraftSaveState.saved;
@@ -234,6 +292,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _searchQuery = '';
     _searchState = NoteSearchState.idle;
     _searchError = null;
+    _selectedTag = null;
     _notes = await store.recentNotes();
     _currentDraft = _notes.isEmpty
         ? _newDraft()
@@ -326,14 +385,18 @@ final class NoteWorkspaceController extends ChangeNotifier {
     super.dispose();
   }
 
-  void _replaceDraft({required String title, required Object body}) {
+  void _replaceDraft({
+    required String title,
+    required Object body,
+    Iterable<String>? tags,
+  }) {
     final previous = _currentDraft!;
     final updated = NoteDraft(
       noteId: previous.noteId,
       format: previous.format,
       title: title,
       body: body,
-      tags: previous.tags,
+      tags: tags ?? previous.tags,
       baseRevisionIds: previous.baseRevisionIds,
       updatedAtUtc: clock().toUtc(),
       deleted: previous.deleted,
@@ -474,7 +537,8 @@ final class NoteWorkspaceController extends ChangeNotifier {
     final updated = _notes
         .where((note) => note.noteId != draft.noteId)
         .toList(growable: true);
-    if (!draft.deleted) {
+    if (!draft.deleted &&
+        (_selectedTag == null || draft.tags.contains(_selectedTag))) {
       updated.add(
         StoredNoteSummary(
           noteId: draft.noteId,
@@ -500,21 +564,26 @@ final class NoteWorkspaceController extends ChangeNotifier {
       format: ContentFormat.markdown,
       title: '',
       body: '',
-      tags: const <String>[],
+      tags: _selectedTag == null ? const <String>[] : <String>[_selectedTag!],
       baseRevisionIds: const <String>[],
       updatedAtUtc: now,
     );
   }
 
   Future<List<StoredNoteSummary>> _loadVisibleNotes() => _searchQuery.isEmpty
-      ? store.recentNotes()
-      : store.searchNotes(_searchQuery);
+      ? store.recentNotes(tag: _selectedTag)
+      : store.searchNotes(_searchQuery, tag: _selectedTag);
 
   void _leaveSearchMode() {
     _searchGeneration += 1;
     _searchQuery = '';
     _searchState = NoteSearchState.idle;
     _searchError = null;
+  }
+
+  void _leaveBrowseFilters() {
+    _leaveSearchMode();
+    _selectedTag = null;
   }
 
   void _notify() {

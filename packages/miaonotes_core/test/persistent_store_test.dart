@@ -65,6 +65,55 @@ void main() {
       expect(await store.searchNotes('milk "unterminated'), isEmpty);
     });
 
+    test('tag summaries and exact filters compose with search', () async {
+      await store.saveDraft(
+        _draft(
+          noteId: 'work-alpha',
+          body: 'alpha roadmap',
+          tags: const <String>['work', 'urgent'],
+          updatedAtUtc: clock.call(),
+        ),
+      );
+      await store.saveDraft(
+        _draft(
+          noteId: 'work-beta',
+          body: 'beta roadmap',
+          tags: const <String>['work'],
+          updatedAtUtc: clock.call(),
+        ),
+      );
+      await store.saveDraft(
+        _draft(
+          noteId: 'personal-alpha',
+          body: 'alpha journal',
+          tags: const <String>['personal'],
+          updatedAtUtc: clock.call(),
+        ),
+      );
+
+      expect(
+        (await store.recentNotes(tag: 'work')).map((note) => note.noteId),
+        <String>['work-beta', 'work-alpha'],
+      );
+      expect(await store.recentNotes(tag: 'workshop'), isEmpty);
+      expect(
+        (await store.searchNotes('alpha', tag: 'work')).single.noteId,
+        'work-alpha',
+      );
+      expect(
+        (await store.tagSummaries()).map(
+          (summary) => (summary.tag, summary.noteCount),
+        ),
+        <(String, int)>[('personal', 1), ('urgent', 1), ('work', 2)],
+      );
+
+      await store.setNoteDeleted('personal-alpha', deleted: true);
+      expect((await store.tagSummaries()).map((tag) => tag.tag), <String>[
+        'urgent',
+        'work',
+      ]);
+    });
+
     test('delete and restore append reversible protocol revisions', () async {
       await store.saveDraft(
         _draft(
@@ -752,12 +801,13 @@ NoteDraft _draft({
   required String body,
   required DateTime updatedAtUtc,
   Iterable<String> baseRevisionIds = const <String>[],
+  Iterable<String> tags = const <String>['test'],
 }) => NoteDraft(
   noteId: noteId,
   format: ContentFormat.markdown,
   title: 'Title',
   body: body,
-  tags: const <String>['test'],
+  tags: tags,
   baseRevisionIds: baseRevisionIds,
   updatedAtUtc: updatedAtUtc,
 );
