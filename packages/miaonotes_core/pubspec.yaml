@@ -1,0 +1,21 @@
+name: miaonotes_core
+description: Pure Dart local-first data and synchronization core for MiaoNotes.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+
+dependencies:
+  crypto: ^3.0.7
+  cryptography: ^2.9.0
+  drift: ^2.34.3
+  sqlite3: ^3.5.1
+  xml: ^6.6.1
+
+dev_dependencies:
+  build_runner: ^2.16.0
+  drift_dev: ^2.34.5
+  lints: ^6.0.0
+  test: ^1.26.0

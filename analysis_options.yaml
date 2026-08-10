@@ -1,0 +1,15 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  errors:
+    avoid_print: ignore
+  exclude:
+    - build/**
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - directives_ordering
+    - prefer_final_locals
+    - unawaited_futures

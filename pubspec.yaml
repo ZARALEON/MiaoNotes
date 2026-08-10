@@ -1,0 +1,13 @@
+name: miaonotes_workspace
+publish_to: none
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+
+workspace:
+  - packages/miaonotes_core
+  - tools/sync_simulator
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.26.0

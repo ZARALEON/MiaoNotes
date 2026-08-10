@@ -1,0 +1,23 @@
+library;
+
+export 'src/crypto/encrypted_object_store.dart';
+export 'src/crypto/vault_crypto.dart';
+export 'src/database/database.dart' hide Revision, SyncEvent;
+export 'src/database/persistent_store.dart';
+export 'src/database/schema_v1.dart';
+export 'src/export/export_snapshot.dart';
+export 'src/model/canonical_json.dart';
+export 'src/model/content_format.dart';
+export 'src/model/note_draft.dart';
+export 'src/model/revision.dart';
+export 'src/model/sync_event.dart';
+export 'src/model/vault_identity.dart';
+export 'src/storage/fake_object_store.dart';
+export 'src/storage/object_store.dart';
+export 'src/storage/s3_object_store.dart';
+export 'src/sync/id_factory.dart';
+export 'src/sync/persistent_sync_engine.dart';
+export 'src/sync/protocol_paths.dart';
+export 'src/sync/sync_engine.dart';
+export 'src/sync/sync_exception.dart';
+export 'src/sync/sync_replica.dart';

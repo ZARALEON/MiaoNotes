@@ -1,0 +1,16 @@
+name: miaonotes_sync_simulator
+description: Deterministic multi-device sync and fault simulator for MiaoNotes.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+
+dependencies:
+  miaonotes_core:
+    path: ../../packages/miaonotes_core
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.26.0

@@ -1,0 +1,25 @@
+name: miaonotes_windows
+description: Lightweight Windows client for MiaoNotes.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  cryptography: ^2.9.0
+  ffi: ^2.2.0
+  flutter:
+    sdk: flutter
+  miaonotes_core:
+    path: ../../packages/miaonotes_core
+  win32: ^6.4.0
+
+dev_dependencies:
+  drift: ^2.34.3
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
