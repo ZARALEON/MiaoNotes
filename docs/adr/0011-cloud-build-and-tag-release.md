@@ -21,6 +21,8 @@ GitHub Actions is the authoritative build environment.
   downloadable binary.
 - Every push to `main` uploads the complete Windows release directory as a
   portable ZIP plus a SHA-256 checksum. These snapshots expire after seven days.
+- Maintainers may manually dispatch `core-ci` for a selected branch. A successful
+  manual run uploads the same seven-day Windows snapshot as a push to `main`.
 - A tag matching `vMAJOR.MINOR.PATCH` starts the release workflow.
 - The version in the tag must exactly match the semantic version in
   `apps/windows/pubspec.yaml`; the Flutter build suffix is ignored.

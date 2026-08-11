@@ -66,8 +66,10 @@ flutter build windows --release
 
 GitHub Actions is the authoritative build environment, so a local machine can be
 used primarily as a code editor. Pull requests validate Core and Windows. Every
-green push to `main` also provides a seven-day Windows snapshot under that
-workflow run's **Artifacts** section.
+green push to `main`, as well as a manually dispatched `core-ci` run, provides a
+seven-day Windows snapshot under that workflow run's **Artifacts** section. A
+manual run can be started from **Actions → core-ci → Run workflow** and may target
+a selected branch.
 
 Maintainers publish a version by first updating `apps/windows/pubspec.yaml`,
 merging the change into a green `main`, and then pushing the matching
