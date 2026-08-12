@@ -99,6 +99,36 @@ void main() {
     expect(workspace.currentDraft!.tags, <String>['work']);
   });
 
+  test('pinning and local sort order update the visible list', () async {
+    final fixture = await _Fixture.open();
+    addTearDown(fixture.close);
+    final workspace = fixture.app.workspace;
+
+    final firstId = workspace.currentDraft!.noteId;
+    workspace.updateTitle('Zulu');
+    await workspace.flush();
+    await workspace.createNote();
+    final secondId = workspace.currentDraft!.noteId;
+    workspace.updateTitle('Alpha');
+    await workspace.flush();
+
+    await workspace.setSortOrder(NoteSortOrder.titleAscending);
+    expect(workspace.notes.map((note) => note.noteId), <String>[
+      secondId,
+      firstId,
+    ]);
+
+    await workspace.selectNote(firstId);
+    await workspace.toggleCurrentNotePinned();
+    expect(workspace.currentNotePinned, isTrue);
+    expect(workspace.notes.first.noteId, firstId);
+    expect(
+      await fixture.app.store.loadNoteSortOrder(),
+      NoteSortOrder.titleAscending,
+    );
+    expect((await fixture.app.store.recoveryState()).pendingObjects, 0);
+  });
+
   test('creating a note leaves search mode', () async {
     final fixture = await _Fixture.open();
     addTearDown(fixture.close);

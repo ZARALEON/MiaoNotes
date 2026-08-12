@@ -59,6 +59,7 @@ final class StoredNoteSummary {
     required this.format,
     required this.updatedAtUtc,
     required this.deleted,
+    required this.pinned,
   });
 
   final String noteId;
@@ -67,6 +68,22 @@ final class StoredNoteSummary {
   final ContentFormat format;
   final DateTime updatedAtUtc;
   final bool deleted;
+  final bool pinned;
+}
+
+enum NoteSortOrder {
+  updatedNewest('updated_newest'),
+  updatedOldest('updated_oldest'),
+  titleAscending('title_ascending');
+
+  const NoteSortOrder(this.wireName);
+
+  final String wireName;
+
+  static NoteSortOrder fromWireName(String value) => values.firstWhere(
+    (order) => order.wireName == value,
+    orElse: () => updatedNewest,
+  );
 }
 
 final class StoredTagSummary {
@@ -951,19 +968,26 @@ final class PersistentNoteStore {
   Future<List<StoredNoteSummary>> recentNotes({
     int limit = 50,
     String? tag,
+    NoteSortOrder sortOrder = NoteSortOrder.updatedNewest,
   }) async {
     final tagFilter = _normalizedTagFilter(tag);
     final rows = await database
         .customSelect(
-          'SELECT note_id, title, body_text, format, is_deleted, updated_at_ms '
+          'SELECT n.note_id, n.title, n.body_text, n.format, n.is_deleted, '
+          'n.updated_at_ms, EXISTS (SELECT 1 FROM settings p '
+          'WHERE p.setting_key = \'note_pinned:\' || n.note_id '
+          'AND p.value_json = \'true\') AS is_pinned '
           'FROM notes n WHERE is_deleted = 0 '
           '${tagFilter == null ? '' : 'AND EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE value = ?) '} '
-          'ORDER BY updated_at_ms DESC, note_id LIMIT ?',
+          'ORDER BY is_pinned DESC, ${_noteOrderClause(sortOrder, alias: 'n')} LIMIT ?',
           variables: <Variable>[
             if (tagFilter != null) Variable.withString(tagFilter),
             Variable.withInt(limit),
           ],
-          readsFrom: <ResultSetImplementation<Table, Object?>>{database.notes},
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            database.notes,
+            database.settings,
+          },
         )
         .get();
     return List.unmodifiable(rows.map(_summaryFromRow));
@@ -1019,11 +1043,15 @@ final class PersistentNoteStore {
     final rows = await database
         .customSelect(
           'SELECT n.note_id, n.title, n.body_text, n.format, '
-          'n.is_deleted, n.updated_at_ms FROM notes_fts f '
+          'n.is_deleted, n.updated_at_ms, '
+          'EXISTS (SELECT 1 FROM settings p '
+          'WHERE p.setting_key = \'note_pinned:\' || n.note_id '
+          'AND p.value_json = \'true\') AS is_pinned FROM notes_fts f '
           'JOIN notes n ON n.note_id = f.note_id '
           'WHERE notes_fts MATCH ? AND n.is_deleted = 0 '
           '${tagFilter == null ? '' : 'AND EXISTS (SELECT 1 FROM json_each(n.tags_json) WHERE value = ?) '} '
-          'ORDER BY bm25(notes_fts), n.updated_at_ms DESC LIMIT ?',
+          'ORDER BY is_pinned DESC, bm25(notes_fts), '
+          'n.updated_at_ms DESC LIMIT ?',
           variables: <Variable>[
             Variable.withString(ftsQuery),
             if (tagFilter != null) Variable.withString(tagFilter),
@@ -1032,10 +1060,80 @@ final class PersistentNoteStore {
           readsFrom: <ResultSetImplementation<Table, Object?>>{
             database.notes,
             database.notesFts,
+            database.settings,
           },
         )
         .get();
     return List.unmodifiable(rows.map(_summaryFromRow));
+  }
+
+  Future<bool> isNotePinned(String noteId) async {
+    final row = await database
+        .customSelect(
+          'SELECT value_json FROM settings WHERE setting_key = ?',
+          variables: <Variable>[Variable.withString('note_pinned:$noteId')],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            database.settings,
+          },
+        )
+        .getSingleOrNull();
+    return row?.read<String>('value_json') == 'true';
+  }
+
+  Future<void> setNotePinned(String noteId, {required bool pinned}) async {
+    final key = 'note_pinned:$noteId';
+    if (!pinned) {
+      await database.customUpdate(
+        'DELETE FROM settings WHERE setting_key = ?',
+        variables: <Variable>[Variable.withString(key)],
+        updates: <TableInfo<Table, Object?>>{database.settings},
+      );
+      return;
+    }
+    await database.customUpdate(
+      'INSERT INTO settings(setting_key, value_json, updated_at_ms) '
+      'VALUES (?, \'true\', ?) ON CONFLICT(setting_key) DO UPDATE SET '
+      'value_json = excluded.value_json, updated_at_ms = excluded.updated_at_ms',
+      variables: <Variable>[
+        Variable.withString(key),
+        Variable.withInt(clock().toUtc().millisecondsSinceEpoch),
+      ],
+      updates: <TableInfo<Table, Object?>>{database.settings},
+    );
+  }
+
+  Future<NoteSortOrder> loadNoteSortOrder() async {
+    final row = await database
+        .customSelect(
+          'SELECT value_json FROM settings WHERE setting_key = \'note_sort_order\'',
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            database.settings,
+          },
+        )
+        .getSingleOrNull();
+    if (row == null) {
+      return NoteSortOrder.updatedNewest;
+    }
+    try {
+      return NoteSortOrder.fromWireName(
+        jsonDecode(row.read<String>('value_json')) as String,
+      );
+    } on Object {
+      return NoteSortOrder.updatedNewest;
+    }
+  }
+
+  Future<void> setNoteSortOrder(NoteSortOrder order) async {
+    await database.customUpdate(
+      'INSERT INTO settings(setting_key, value_json, updated_at_ms) '
+      'VALUES (\'note_sort_order\', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET '
+      'value_json = excluded.value_json, updated_at_ms = excluded.updated_at_ms',
+      variables: <Variable>[
+        Variable.withString(jsonEncode(order.wireName)),
+        Variable.withInt(clock().toUtc().millisecondsSinceEpoch),
+      ],
+      updates: <TableInfo<Table, Object?>>{database.settings},
+    );
   }
 
   Future<List<String>> noteHeads(String noteId) async {
@@ -1736,7 +1834,17 @@ StoredNoteSummary _summaryFromRow(QueryRow row) => StoredNoteSummary(
     isUtc: true,
   ),
   deleted: row.read<int>('is_deleted') == 1,
+  pinned: row.data.containsKey('is_pinned') && row.read<int>('is_pinned') == 1,
 );
+
+String _noteOrderClause(NoteSortOrder order, {required String alias}) =>
+    switch (order) {
+      NoteSortOrder.updatedNewest =>
+        '$alias.updated_at_ms DESC, $alias.note_id',
+      NoteSortOrder.updatedOldest => '$alias.updated_at_ms, $alias.note_id',
+      NoteSortOrder.titleAscending =>
+        '$alias.title COLLATE NOCASE, $alias.title, $alias.note_id',
+    };
 
 StoredConflict _conflictFromRow(QueryRow row) => StoredConflict(
   conflictId: row.read<String>('conflict_id'),
