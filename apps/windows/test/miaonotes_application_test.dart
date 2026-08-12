@@ -6,6 +6,38 @@ import 'package:miaonotes_windows/src/application/miaonotes_application.dart';
 import 'package:miaonotes_windows/src/application/note_workspace_controller.dart';
 
 void main() {
+  test('default data directory uses LOCALAPPDATA', () {
+    final directory = resolveMiaoNotesDataDirectory(
+      environment: const <String, String>{
+        'LOCALAPPDATA': r'C:\Users\Test\AppData',
+      },
+    );
+
+    expect(directory.path, r'C:\Users\Test\AppData\MiaoNotes');
+  });
+
+  test('diagnostic data directory override wins over LOCALAPPDATA', () {
+    final directory = resolveMiaoNotesDataDirectory(
+      environment: const <String, String>{
+        'LOCALAPPDATA': r'C:\Users\Test\AppData',
+        miaonotesDataDirectoryEnvironmentVariable: r'D:\isolated\miaonotes',
+      },
+    );
+
+    expect(directory.path, r'D:\isolated\miaonotes');
+  });
+
+  test('blank diagnostic data directory override is ignored', () {
+    final directory = resolveMiaoNotesDataDirectory(
+      environment: const <String, String>{
+        'LOCALAPPDATA': r'C:\Users\Test\AppData',
+        miaonotesDataDirectoryEnvironmentVariable: '   ',
+      },
+    );
+
+    expect(directory.path, r'C:\Users\Test\AppData\MiaoNotes');
+  });
+
   test('first edit is persisted locally and appears in recent notes', () async {
     final fixture = await _Fixture.open();
     addTearDown(fixture.close);

@@ -96,6 +96,11 @@ jobs:
       - name: Build Windows release
         working-directory: apps/windows
         run: flutter build windows --release
+      - name: Smoke-test Windows release
+        shell: pwsh
+        run: >-
+          & .github/scripts/windows-release-smoke.ps1
+          -ReleaseDirectory apps/windows/build/windows/x64/runner/Release
       - name: Package release assets
         id: package_release
         working-directory: apps/windows

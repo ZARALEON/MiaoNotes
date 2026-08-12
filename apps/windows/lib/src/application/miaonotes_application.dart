@@ -41,7 +41,7 @@ final class MiaoNotesApplication {
     final effectiveClock = clock ?? (() => DateTime.now().toUtc());
     final effectiveIds = idFactory ?? UuidV7IdFactory();
     final effectiveDirectory = database == null
-        ? dataDirectory ?? _defaultDataDirectory()
+        ? dataDirectory ?? resolveMiaoNotesDataDirectory()
         : dataDirectory;
     if (effectiveDirectory != null && !await effectiveDirectory.exists()) {
       await effectiveDirectory.create(recursive: true);
@@ -201,11 +201,19 @@ final class MiaoNotesApplication {
   }
 }
 
-Directory _defaultDataDirectory() {
+const miaonotesDataDirectoryEnvironmentVariable = 'MIAONOTES_DATA_DIRECTORY';
+
+Directory resolveMiaoNotesDataDirectory({Map<String, String>? environment}) {
   if (!Platform.isWindows) {
     throw UnsupportedError('The current application shell supports Windows');
   }
-  final localAppData = Platform.environment['LOCALAPPDATA'];
+  final effectiveEnvironment = environment ?? Platform.environment;
+  final override =
+      effectiveEnvironment[miaonotesDataDirectoryEnvironmentVariable]?.trim();
+  if (override != null && override.isNotEmpty) {
+    return Directory(override);
+  }
+  final localAppData = effectiveEnvironment['LOCALAPPDATA'];
   if (localAppData == null || localAppData.isEmpty) {
     throw StateError('LOCALAPPDATA is unavailable');
   }
