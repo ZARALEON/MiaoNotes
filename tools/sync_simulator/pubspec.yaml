@@ -1,6 +1,6 @@
 name: miaonotes_sync_simulator
 description: Deterministic multi-device sync and fault simulator for MiaoNotes.
-version: 0.1.0
+version: 0.2.0
 publish_to: none
 resolution: workspace
 
