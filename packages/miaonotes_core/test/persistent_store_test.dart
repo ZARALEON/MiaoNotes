@@ -114,6 +114,58 @@ void main() {
       ]);
     });
 
+    test('local pinning stays first and sort preference persists', () async {
+      await store.saveDraft(
+        _draft(
+          noteId: 'z-latest',
+          title: 'Zulu',
+          body: 'latest body',
+          updatedAtUtc: clock.call(),
+        ),
+      );
+      await store.saveDraft(
+        _draft(
+          noteId: 'a-older',
+          title: 'Alpha',
+          body: 'older body',
+          updatedAtUtc: clock.call(),
+        ),
+      );
+
+      await store.setNotePinned('z-latest', pinned: true);
+      await store.setNoteSortOrder(NoteSortOrder.titleAscending);
+
+      expect(await store.isNotePinned('z-latest'), isTrue);
+      expect(await store.loadNoteSortOrder(), NoteSortOrder.titleAscending);
+      expect(
+        (await store.recentNotes(
+          sortOrder: NoteSortOrder.titleAscending,
+        )).map((note) => (note.noteId, note.pinned)),
+        <(String, bool)>[('z-latest', true), ('a-older', false)],
+      );
+      expect((await store.searchNotes('body')).first.noteId, 'z-latest');
+
+      await store.setNotePinned('z-latest', pinned: false);
+      expect(await store.isNotePinned('z-latest'), isFalse);
+      expect(
+        (await store.recentNotes(
+          sortOrder: NoteSortOrder.titleAscending,
+        )).map((note) => note.noteId),
+        <String>['a-older', 'z-latest'],
+      );
+      expect((await store.recentNotes()).map((note) => note.noteId), <String>[
+        'a-older',
+        'z-latest',
+      ]);
+      expect(
+        (await store.recentNotes(
+          sortOrder: NoteSortOrder.updatedOldest,
+        )).map((note) => note.noteId),
+        <String>['z-latest', 'a-older'],
+      );
+      expect((await store.recoveryState()).pendingObjects, 0);
+    });
+
     test('delete and restore append reversible protocol revisions', () async {
       await store.saveDraft(
         _draft(
@@ -800,12 +852,13 @@ NoteDraft _draft({
   required String noteId,
   required String body,
   required DateTime updatedAtUtc,
+  String title = 'Title',
   Iterable<String> baseRevisionIds = const <String>[],
   Iterable<String> tags = const <String>['test'],
 }) => NoteDraft(
   noteId: noteId,
   format: ContentFormat.markdown,
-  title: 'Title',
+  title: title,
   body: body,
   tags: tags,
   baseRevisionIds: baseRevisionIds,

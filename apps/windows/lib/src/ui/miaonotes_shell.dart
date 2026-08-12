@@ -310,6 +310,30 @@ final class _NotesSidebar extends StatelessWidget {
                         }()),
                         icon: const Icon(Icons.label_outline, size: 20),
                       ),
+                      PopupMenuButton<NoteSortOrder>(
+                        key: const Key('note-sort-button'),
+                        tooltip: '便签排序（仅此设备）',
+                        initialValue: workspace.sortOrder,
+                        onSelected: (order) => unawaited(
+                          _ignoreFailure(workspace.setSortOrder(order)),
+                        ),
+                        icon: const Icon(Icons.sort, size: 20),
+                        itemBuilder: (context) =>
+                            const <PopupMenuEntry<NoteSortOrder>>[
+                              PopupMenuItem(
+                                value: NoteSortOrder.updatedNewest,
+                                child: Text('最近修改'),
+                              ),
+                              PopupMenuItem(
+                                value: NoteSortOrder.updatedOldest,
+                                child: Text('最早修改'),
+                              ),
+                              PopupMenuItem(
+                                value: NoteSortOrder.titleAscending,
+                                child: Text('标题 A–Z'),
+                              ),
+                            ],
+                      ),
                       IconButton(
                         key: const Key('recycle-bin-button'),
                         tooltip: '回收站',
@@ -593,6 +617,27 @@ final class _NoteListTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
+                if (note.pinned)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          Icons.push_pin,
+                          size: 13,
+                          color: Color(0xff9b5865),
+                        ),
+                        SizedBox(width: 3),
+                        Text(
+                          '已置顶 · 仅此设备',
+                          style: TextStyle(
+                            color: Color(0xff9b5865),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (preview.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 4),
                   Text(
@@ -691,6 +736,21 @@ final class _NoteEditorState extends State<_NoteEditor> {
                   hintText: '标题',
                   hintStyle: TextStyle(color: Color(0xffc1aaa3)),
                 ),
+              ),
+            ),
+            IconButton(
+              key: const Key('pin-note-button'),
+              tooltip: widget.workspace.currentNotePinned
+                  ? '取消置顶（仅此设备）'
+                  : '置顶（仅此设备）',
+              onPressed: () => unawaited(
+                _ignoreFailure(widget.workspace.toggleCurrentNotePinned()),
+              ),
+              icon: Icon(
+                widget.workspace.currentNotePinned
+                    ? Icons.push_pin
+                    : Icons.push_pin_outlined,
+                size: 20,
               ),
             ),
             IconButton(

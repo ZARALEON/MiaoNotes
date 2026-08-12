@@ -28,6 +28,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
   NoteSearchState _searchState = NoteSearchState.idle;
   Object? _searchError;
   String? _selectedTag;
+  NoteSortOrder _sortOrder = NoteSortOrder.updatedNewest;
   int _searchGeneration = 0;
   NoteDraft? _pendingSave;
   Future<void>? _saveLoop;
@@ -46,6 +47,13 @@ final class NoteWorkspaceController extends ChangeNotifier {
   NoteSearchState get searchState => _searchState;
   Object? get searchError => _searchError;
   String? get selectedTag => _selectedTag;
+  NoteSortOrder get sortOrder => _sortOrder;
+  bool get currentNotePinned {
+    final noteId = _currentDraft?.noteId;
+    return noteId != null &&
+        _notes.any((note) => note.noteId == noteId && note.pinned);
+  }
+
   bool get initialized => _initialized;
   bool get commitInProgress => _commitInProgress;
   int get localSaveGeneration => _localSaveGeneration;
@@ -54,7 +62,8 @@ final class NoteWorkspaceController extends ChangeNotifier {
     if (_initialized) {
       return;
     }
-    _notes = await store.recentNotes();
+    _sortOrder = await store.loadNoteSortOrder();
+    _notes = await store.recentNotes(sortOrder: _sortOrder);
     if (_notes.isEmpty) {
       _currentDraft = _newDraft();
     } else {
@@ -73,7 +82,10 @@ final class NoteWorkspaceController extends ChangeNotifier {
       _searchQuery = '';
       _searchState = NoteSearchState.idle;
       _searchError = null;
-      _notes = await store.recentNotes(tag: _selectedTag);
+      _notes = await store.recentNotes(
+        tag: _selectedTag,
+        sortOrder: _sortOrder,
+      );
     }
     _currentDraft = _newDraft();
     _saveState = DraftSaveState.idle;
@@ -145,7 +157,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _notify();
     try {
       final results = normalized.isEmpty
-          ? await store.recentNotes(tag: _selectedTag)
+          ? await store.recentNotes(tag: _selectedTag, sortOrder: _sortOrder)
           : await store.searchNotes(normalized, tag: _selectedTag);
       if (generation != _searchGeneration) {
         return;
@@ -180,7 +192,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _notify();
     try {
       final results = _searchQuery.isEmpty
-          ? await store.recentNotes(tag: selected)
+          ? await store.recentNotes(tag: selected, sortOrder: _sortOrder)
           : await store.searchNotes(_searchQuery, tag: selected);
       if (generation != _searchGeneration) {
         return;
@@ -198,6 +210,27 @@ final class NoteWorkspaceController extends ChangeNotifier {
     }
   }
 
+  Future<void> setSortOrder(NoteSortOrder order) async {
+    if (_sortOrder == order) {
+      return;
+    }
+    await store.setNoteSortOrder(order);
+    _sortOrder = order;
+    _notes = await _loadVisibleNotes();
+    _notify();
+  }
+
+  Future<void> toggleCurrentNotePinned() async {
+    final current = _currentDraft;
+    if (current == null || !await _flushBeforeNavigation()) {
+      return;
+    }
+    final pinned = await store.isNotePinned(current.noteId);
+    await store.setNotePinned(current.noteId, pinned: !pinned);
+    _notes = await _loadVisibleNotes();
+    _notify();
+  }
+
   Future<bool> deleteCurrentNote() async {
     final current = _currentDraft;
     if (current == null || !await _flushBeforeNavigation()) {
@@ -208,7 +241,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
       await store.setNoteDeleted(current.noteId, deleted: true);
     }
     _leaveSearchMode();
-    _notes = await store.recentNotes(tag: _selectedTag);
+    _notes = await store.recentNotes(tag: _selectedTag, sortOrder: _sortOrder);
     _currentDraft = _notes.isEmpty
         ? _newDraft()
         : await store.loadDraft(_notes.first.noteId);
@@ -233,7 +266,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
     }
     await store.setNoteDeleted(noteId, deleted: false);
     _leaveBrowseFilters();
-    _notes = await store.recentNotes();
+    _notes = await store.recentNotes(sortOrder: _sortOrder);
     _currentDraft = await store.loadDraft(noteId);
     _saveState = DraftSaveState.saved;
     _lastSavedAtUtc = _currentDraft?.updatedAtUtc;
@@ -293,7 +326,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
     _searchState = NoteSearchState.idle;
     _searchError = null;
     _selectedTag = null;
-    _notes = await store.recentNotes();
+    _notes = await store.recentNotes(sortOrder: _sortOrder);
     _currentDraft = _notes.isEmpty
         ? _newDraft()
         : await store.loadDraft(_notes.first.noteId);
@@ -547,13 +580,13 @@ final class NoteWorkspaceController extends ChangeNotifier {
           format: draft.format,
           updatedAtUtc: draft.updatedAtUtc,
           deleted: false,
+          pinned: _notes.any(
+            (note) => note.noteId == draft.noteId && note.pinned,
+          ),
         ),
       );
     }
-    updated.sort((left, right) {
-      final timeOrder = right.updatedAtUtc.compareTo(left.updatedAtUtc);
-      return timeOrder != 0 ? timeOrder : left.noteId.compareTo(right.noteId);
-    });
+    updated.sort((left, right) => _compareSummaries(left, right, _sortOrder));
     _notes = List.unmodifiable(updated);
   }
 
@@ -571,7 +604,7 @@ final class NoteWorkspaceController extends ChangeNotifier {
   }
 
   Future<List<StoredNoteSummary>> _loadVisibleNotes() => _searchQuery.isEmpty
-      ? store.recentNotes(tag: _selectedTag)
+      ? store.recentNotes(tag: _selectedTag, sortOrder: _sortOrder)
       : store.searchNotes(_searchQuery, tag: _selectedTag);
 
   void _leaveSearchMode() {
@@ -591,4 +624,30 @@ final class NoteWorkspaceController extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+int _compareSummaries(
+  StoredNoteSummary left,
+  StoredNoteSummary right,
+  NoteSortOrder order,
+) {
+  final pinOrder = (right.pinned ? 1 : 0).compareTo(left.pinned ? 1 : 0);
+  if (pinOrder != 0) {
+    return pinOrder;
+  }
+  final contentOrder = switch (order) {
+    NoteSortOrder.updatedNewest => right.updatedAtUtc.compareTo(
+      left.updatedAtUtc,
+    ),
+    NoteSortOrder.updatedOldest => left.updatedAtUtc.compareTo(
+      right.updatedAtUtc,
+    ),
+    NoteSortOrder.titleAscending => _compareTitles(left.title, right.title),
+  };
+  return contentOrder != 0 ? contentOrder : left.noteId.compareTo(right.noteId);
+}
+
+int _compareTitles(String left, String right) {
+  final folded = left.toLowerCase().compareTo(right.toLowerCase());
+  return folded != 0 ? folded : left.compareTo(right);
 }

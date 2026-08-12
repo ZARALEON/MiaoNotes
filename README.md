@@ -115,6 +115,11 @@ tag directory only when the filter button is opened. Exact tag filtering compose
 with full-text search, and a new note inherits the active tag filter so it remains
 visible in context.
 
+Pinning and sorting v1 keeps frequently used notes at the top and offers newest,
+oldest, or title ordering for the remaining sidebar. These are explicitly local
+workspace preferences stored in SQLite; they create no Revision, remote object,
+or sync traffic and therefore may differ between devices.
+
 Recycle Bin v1 provides confirmed soft deletion and on-demand restoration. A
 note with existing history appends a synchronized tombstone Revision; restoring
 it appends a normal child Revision with the original content. A never-committed

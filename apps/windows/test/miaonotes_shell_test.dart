@@ -200,6 +200,38 @@ void main() {
     await app.close();
   });
 
+  testWidgets('pin and sort controls update the local sidebar order', (
+    tester,
+  ) async {
+    final app = await _openTestApplication();
+    final firstId = app.workspace.currentDraft!.noteId;
+    app.workspace.updateTitle('Zulu');
+    await app.workspace.flush();
+    await app.workspace.createNote();
+    final secondId = app.workspace.currentDraft!.noteId;
+    app.workspace.updateTitle('Alpha');
+    await app.workspace.flush();
+
+    await tester.pumpWidget(
+      MiaoNotesShell(workspace: app.workspace, localCommits: app.localCommits),
+    );
+    await tester.tap(find.byKey(const Key('note-sort-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('标题 A–Z'));
+    await tester.pumpAndSettle();
+    expect(app.workspace.notes.first.noteId, secondId);
+
+    await tester.tap(find.byKey(ValueKey<String>('note-list-$firstId')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('pin-note-button')));
+    await tester.pumpAndSettle();
+    expect(app.workspace.notes.first.noteId, firstId);
+    expect(find.text('已置顶 · 仅此设备'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await app.close();
+  });
+
   testWidgets('bootstrap renders local workspace before background work', (
     tester,
   ) async {

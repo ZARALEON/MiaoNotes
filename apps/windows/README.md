@@ -27,6 +27,7 @@ by default.
 - visible count of immutable objects waiting for sync;
 - on-demand local FTS5 search across note titles and bodies with `Ctrl+F`;
 - inline tag editing and on-demand exact tag filtering that composes with search;
+- local-only note pinning plus newest, oldest, and title sidebar ordering;
 - confirmed soft deletion plus an on-demand recycle bin with safe restore;
 - new note button and `Ctrl+N`;
 - manual local version commit with `Ctrl+S`;
