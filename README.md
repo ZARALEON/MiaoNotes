@@ -73,6 +73,11 @@ seven-day Windows snapshot under that workflow run's **Artifacts** section. A
 manual run can be started from **Actions → core-ci → Run workflow** and may target
 a selected branch.
 
+Every cloud-built Windows executable is started against a unique isolated data
+directory before it can be packaged. The smoke gate requires the native window
+and file-backed SQLite database to open successfully, without reading the
+runner's normal notes or sync configuration.
+
 Maintainers publish a version by first updating `apps/windows/pubspec.yaml`,
 merging the change into a green `main`, and then pushing the matching
 `vMAJOR.MINOR.PATCH` tag. The tag workflow repeats all release gates and creates a

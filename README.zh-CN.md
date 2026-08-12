@@ -63,6 +63,8 @@ flutter build windows --release
 
 GitHub Actions 是权威构建环境，因此本地电脑主要用作代码编辑器即可。Pull Request 会验证 Core 和 Windows；每次通过全部检查并推送至 `main` 的提交，以及手动触发的 `core-ci`，都会在对应工作流的 **Artifacts** 区域提供保留七天的 Windows 快照。手动构建可以从 **Actions → core-ci → Run workflow** 启动，并可选择目标分支。
 
+每个云端构建的 Windows 可执行文件在打包前都会使用唯一的隔离数据目录实际启动。冒烟门槛要求原生窗口和文件型 SQLite 数据库均成功打开，同时不会读取执行器的普通便签或同步配置。
+
 维护者发布版本时，应先更新 `apps/windows/pubspec.yaml`，将变更合并进检查通过的 `main`，然后推送对应的 `vMAJOR.MINOR.PATCH` 标签。标签工作流会重新执行全部发布门禁，并创建包含以下文件的 GitHub Release：
 
 - `MiaoNotes-vMAJOR.MINOR.PATCH-windows-x64-portable.zip`；
