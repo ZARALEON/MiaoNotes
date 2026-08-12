@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[Changelog / 更新日志](CHANGELOG.md)
+
 > A lightweight, local-first notes app built for fast opening, fast capture, and safe synchronization.
 
 MiaoNotes is a local-first, lightweight notes application. Its Windows Flutter

@@ -106,7 +106,7 @@ jobs:
           "checksum=$checksum" >> $env:GITHUB_OUTPUT
       - name: Upload Windows snapshot
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MiaoNotes-windows-x64-${{ github.sha }}
           path: |

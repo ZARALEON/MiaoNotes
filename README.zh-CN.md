@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[更新日志 / Changelog](CHANGELOG.md)
+
 > 一款以快速打开、快速记录和安全同步为核心的轻量化、本地优先便签应用。
 
 MiaoNotes 是一款本地优先的轻量化便签应用。目前，Windows Flutter 客户端与纯 Dart 同步核心正在协同开发，同时编辑器始终不依赖网络可用性。
